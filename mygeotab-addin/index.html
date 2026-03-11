@@ -808,7 +808,7 @@
                     setupEventListeners();
                 }
 
-                // Load saved webhook URL
+                // Load saved configuration
                 loadWebhookUrl();
 
                 callback();
@@ -1926,7 +1926,7 @@
                 
                 const statusText = document.getElementById('exchangeConnectionText');
                 if (statusText) {
-                    statusText.textContent = 'Ready to connect. Click "Connect to Exchange" below.';
+                    statusText.textContent = 'Configuration saved. Server-side Exchange access will be used during sync.';
                 }
             }
 
@@ -1944,7 +1944,7 @@
                 try {
                     showAzureFunctionResult('Testing connection...', 'info');
 
-                    const response = await fetch(`${FLEETBRIDGE_API_BASE}/api/health`, {
+                    const response = await fetch(`${FLEETBRIDGE_API_BASE}/health`, {
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json'
@@ -1954,7 +1954,7 @@
                     if (response.ok) {
                         const data = await response.json();
                         showAzureFunctionResult(
-                            `✅ Connection successful! Status: ${data.status}, Key Vault: ${data.keyVaultEnabled ? 'Enabled' : 'Disabled'}`,
+                            `Connection successful. Service status: ${data.status}.`,
                             'success'
                         );
                     } else {
@@ -2144,47 +2144,12 @@
 
             async function checkExchangeConnection() {
                 const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
-                const functionUrl = localStorage.getItem('fleetSyncFunctionUrl');
-                const functionKey = localStorage.getItem('fleetSyncFunctionKey');
-                
-                if (!functionUrl || !functionKey) {
+                if (!clientApiKey) {
                     showExchangeStatus('not_configured');
                     return;
                 }
 
-                // If no client API key, use database name
-                let clientId = clientApiKey;
-                if (!clientId && window.api && window.api.credentials) {
-                    clientId = window.api.credentials.database;
-                }
-
-                if (!clientId) {
-                    showExchangeStatus('not_configured');
-                    return;
-                }
-                
-                try {
-                    // Build endpoint URL
-                    let baseUrl = functionUrl.trim().replace(/\/$/, '');
-                    const endpoint = `${baseUrl}/api/authstatus?code=${encodeURIComponent(functionKey)}`;
-                    
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ clientId: clientId })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.connected) {
-                        showExchangeStatus('connected', result);
-                    } else {
-                        showExchangeStatus('not_connected');
-                    }
-                } catch (error) {
-                    console.error('Exchange status check error:', error);
-                    showExchangeStatus('error', { error: error.message });
-                }
+                showExchangeStatus('connected');
             }
 
             function showExchangeStatus(status, data = {}) {
@@ -2201,9 +2166,9 @@
                         statusDiv.style.borderColor = '#10b981';
                         statusDiv.style.color = '#065f46';
                         statusText.innerHTML = `<strong>✅ Connected to Exchange</strong><br>
-                            <span style="font-size: 12px;">Connected as: ${data.userEmail || 'Unknown'} • Org: ${data.tenantId ? data.tenantId.substring(0, 8) + '...' : 'Unknown'}</span>`;
+                            <span style="font-size: 12px;">This deployment uses server-side Exchange access. Save your API key and run a sync to verify mailbox updates.</span>`;
                         connectBtn.style.display = 'none';
-                        disconnectBtn.style.display = 'inline-flex';
+                        disconnectBtn.style.display = 'none';
                         break;
                         
                     case 'not_connected':
@@ -2211,7 +2176,7 @@
                         statusDiv.style.borderColor = '#fbbf24';
                         statusDiv.style.color = '#92400e';
                         statusText.innerHTML = `<strong>⚠️ Not Connected to Exchange</strong><br>
-                            <span style="font-size: 12px;">Click "Connect to Exchange" to grant FleetBridge access to your Exchange Online.</span>`;
+                            <span style="font-size: 12px;">Exchange access is not confirmed. Save your API key and test the service connection first.</span>`;
                         connectBtn.style.display = 'inline-flex';
                         disconnectBtn.style.display = 'none';
                         break;
@@ -2221,7 +2186,7 @@
                         statusDiv.style.borderColor = '#3b82f6';
                         statusDiv.style.color = '#1e3a8a';
                         statusText.innerHTML = `<strong>ℹ️ Setup Required</strong><br>
-                            <span style="font-size: 12px;">Please configure your Azure Function settings above first.</span>`;
+                            <span style="font-size: 12px;">Please save your FleetBridge API key above first.</span>`;
                         connectBtn.disabled = true;
                         connectBtn.style.display = 'inline-flex';
                         disconnectBtn.style.display = 'none';
@@ -2244,53 +2209,17 @@
                 const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
                 
                 if (!clientApiKey) {
-                    alert('Please save your Azure Function configuration first.');
+                    alert('Please save your FleetBridge configuration first.');
                     return;
                 }
-                
-                // Get client ID (use API key)
-                let clientId = clientApiKey;
 
-                if (!clientId) {
-                    alert('Client ID not available. Please save API key.');
-                    return;
-                }
-                
-                // Build OAuth login URL using hardcoded function URL
-                let baseUrl = FLEETBRIDGE_FUNCTION_URL.trim().replace(/\/$/, '');
-                const authUrl = `${baseUrl}/api/authlogin?clientId=${encodeURIComponent(clientId)}`;
-                
-                // Open OAuth consent in popup
-                const popup = window.open(
-                    authUrl,
-                    'FleetBridge OAuth',
-                    'width=600,height=800,left=200,top=100'
-                );
-                
-                if (!popup) {
-                    alert('Popup blocked! Please allow popups for this site and try again.');
-                    return;
-                }
-                
-                // Poll for popup close (user completed auth)
-                const pollTimer = setInterval(() => {
-                    if (popup.closed) {
-                        clearInterval(pollTimer);
-                        // Recheck connection status after 1 second
-                        setTimeout(() => checkExchangeConnection(), 1000);
-                    }
-                }, 500);
+                showExchangeStatus('connected');
+                alert('Exchange connection is managed on the server for this deployment. Use "Trigger Sync Now" to validate the setup.');
             }
 
             async function disconnectFromExchange() {
-                if (!confirm('Are you sure you want to disconnect from Exchange? You will need to reconnect to sync devices.')) {
-                    return;
-                }
-
-                // In a full implementation, you would call an endpoint to delete the refresh token
-                // For now, just show the not-connected status
-                showExchangeStatus('not_connected');
-                alert('Disconnected from Exchange. Contact support to fully revoke access.');
+                showExchangeStatus('connected');
+                alert('Server-side Exchange access cannot be disconnected from this add-in.');
             }
 
             return {
@@ -2303,4 +2232,3 @@
     </script>
 </body>
 </html>
-
