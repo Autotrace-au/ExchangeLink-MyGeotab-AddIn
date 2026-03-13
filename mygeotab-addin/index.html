@@ -1745,9 +1745,9 @@
              * For now, replace YOUR_FUNCTION_KEY with your actual key from:
              * az functionapp keys list --resource-group FleetBridgeRG --name fleetbridge-mygeotab
              */
-            // Legacy Azure Function constants (deprecated). Replaced by container app base URL.
+            // Backend endpoint defaults. These will be replaced by the single-tenant Function App values.
             const FLEETBRIDGE_API_BASE = 'https://exchange-calendar-processor.mangosmoke-ee55f1a9.australiaeast.azurecontainerapps.io';
-            // Container App does not require a function key; leave blank for backwards compatibility logic.
+            // Leave blank until the Function App deployment and auth model are finalized.
             const AZURE_FUNCTION_KEY = '';
 
             /**
@@ -1759,14 +1759,11 @@
              * Option 2 - No API Key (for testing or direct credentials):
              * Leave CLIENT_API_KEY as null. The Add-In will send MyGeotab credentials with each request.
              *
-             * Option 3 - Per-Client Add-In (for multi-tenant SaaS):
-             * Create a separate version of this Add-In for each client with their unique API key.
              */
             const CLIENT_API_KEY = null;  // Set to client's API key or leave as null
 
             /**
-             * Update device properties (v6.3 - Container App with Optional Function Key)
-             * Uses Python Azure Function or Container App to update properties via MyGeotab Python SDK
+             * Update device properties via the Azure backend to avoid MyGeotab JS SDK property update issues.
              * This avoids the JsonSerializerException issues with the JavaScript SDK
              *
              * Configuration is loaded from localStorage (set in Sync to Exchange tab)
@@ -2139,7 +2136,7 @@
             }
 
             // ===================================================================
-            // Exchange Connection Functions (OAuth Multi-Tenant SaaS)
+            // Exchange Connection Functions
             // ===================================================================
 
             async function checkExchangeConnection() {

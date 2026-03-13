@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "australiaeast"
+    },
+    "environmentName": {
+      "value": "goa-prod"
+    },
+    "appName": {
+      "value": "fleetbridge"
+    },
+    "storageAccountName": {
+      "value": "replaceprodstorage"
+    },
+    "functionAppName": {
+      "value": "replace-prod-function-app"
+    },
+    "keyVaultName": {
+      "value": "replace-prod-keyvault"
+    },
+    "appServicePlanName": {
+      "value": "replace-prod-plan"
+    },
+    "containerRegistryName": {
+      "value": "replaceprodacr"
+    },
+    "functionImageRepository": {
+      "value": "fleetbridge-function"
+    },
+    "functionImageTag": {
+      "value": "latest"
+    },
+    "exchangeTenantId": {
+      "value": "replace-tenant-id"
+    },
+    "exchangeClientId": {
+      "value": "replace-client-id"
+    },
+    "equipmentDomain": {
+      "value": "garageofawesome.com.au"
+    },
+    "defaultTimezone": {
+      "value": "AUS Eastern Standard Time"
+    },
+    "myGeotabServer": {
+      "value": "my.geotab.com"
+    },
+    "makeMailboxVisibleOnFirstSync": {
+      "value": true
+    }
+  }
+}

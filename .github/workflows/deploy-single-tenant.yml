@@ -1,0 +1,121 @@
+name: Deploy Single-Tenant Function App
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: Azure resource group name
+        required: true
+        type: string
+      parameters_file:
+        description: Checked-in infra parameter file
+        required: true
+        default: infra/parameters.goa-test.json
+        type: string
+      run_smoke_sync:
+        description: Run a one-device sync smoke test after deployment
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Function App Infrastructure and Image
+        env:
+          FUNCTION_IMAGE_TAG_OVERRIDE: ${{ github.sha }}
+        run: bash ./scripts/deploy-function-app.sh "${{ inputs.resource_group }}" "${{ inputs.parameters_file }}"
+
+      - name: Decode Exchange Certificate
+        env:
+          EXCHANGE_PFX_BASE64: ${{ secrets.EXCHANGE_PFX_BASE64 }}
+        run: |
+          if [ -z "${EXCHANGE_PFX_BASE64}" ]; then
+            echo "Missing GitHub secret: EXCHANGE_PFX_BASE64"
+            exit 1
+          fi
+          printf '%s' "${EXCHANGE_PFX_BASE64}" | base64 --decode > /tmp/exchange-cert.pfx
+
+      - name: Seed Key Vault Secrets
+        env:
+          MYGEOTAB_DATABASE: ${{ secrets.MYGEOTAB_DATABASE }}
+          MYGEOTAB_USERNAME: ${{ secrets.MYGEOTAB_USERNAME }}
+          MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
+          EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
+        run: |
+          KEY_VAULT_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(data["parameters"]["keyVaultName"]["value"])
+PY
+)"
+          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(data["parameters"]["equipmentDomain"]["value"])
+PY
+)"
+
+          bash ./scripts/seed-key-vault-secrets.sh \
+            "${KEY_VAULT_NAME}" \
+            "${MYGEOTAB_DATABASE}" \
+            "${MYGEOTAB_USERNAME}" \
+            "${MYGEOTAB_PASSWORD}" \
+            /tmp/exchange-cert.pfx \
+            "${EXCHANGE_PFX_PASSWORD}" \
+            "${EQUIPMENT_DOMAIN}"
+
+      - name: Smoke Test Health
+        run: |
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(data["parameters"]["functionAppName"]["value"])
+PY
+)"
+          curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
+
+      - name: Smoke Test Sync
+        if: ${{ inputs.run_smoke_sync }}
+        run: |
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(data["parameters"]["functionAppName"]["value"])
+PY
+)"
+          curl -fsS -X POST \
+            "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-to-exchange" \
+            -H 'Content-Type: application/json' \
+            -d '{"maxDevices":1}'

@@ -1,258 +1,103 @@
-# FleetBridge MyGeotab Add-In - Deployment Guide
+# Deployment Baseline
 
-## Overview
+## Deployment Target
 
-The FleetBridge MyGeotab Add-In now uses a **Python Azure Function** to update device properties. This was necessary because the MyGeotab JavaScript SDK has persistent issues with updating custom properties (JsonSerializerException errors).
+FleetBridge is being standardized on Azure Function App for the single-tenant product.
 
-## Architecture
+## Intended Azure Resources
 
-```
-MyGeotab Add-In (JavaScript)
-    ↓
-Azure Function (Python)
-    ↓
-MyGeotab API (Python SDK)
-```
+- Resource Group
+- Storage Account
+- Function App
+- Key Vault
+- Managed Identity
+- Azure Container Registry
 
-## Prerequisites
+## Deployment Model
 
-1. **Azure Subscription** - You'll need an active Azure subscription
-2. **Azure CLI** - Install: `brew install azure-cli`
-3. **Azure Functions Core Tools** - Install: `brew install azure-functions-core-tools@4`
-4. **Python 3.9+** - Check: `python3 --version`
+The preferred deployment model is:
 
-## Step 1: Deploy the Azure Function
+1. Provision Azure resources from `infra/`
+2. Deploy Function App code from `function-app/`
+3. Populate Key Vault secrets
+4. Configure the MyGeotab Add-In with the Function App endpoint
+5. Run first sync against pre-created hidden mailboxes
 
-### 1.1 Login to Azure
+A thin deployment wrapper is available at `scripts/deploy-function-app.sh`.
+A Key Vault seeding helper is available at `scripts/seed-key-vault-secrets.sh`.
+The one-run CI entry point is `.github/workflows/deploy-single-tenant.yml`.
 
-```bash
-az login
-```
+## Current Baseline
 
-### 1.2 Create Resource Group
+The repository now includes:
 
-```bash
-az group create \
-  --name FleetBridgeRG \
-  --location australiaeast
-```
+- a minimal Function App scaffold that exposes `health`, `update-device-properties`, and `sync-to-exchange`
+- an initial `main.bicep` template for the Azure resources required by the single-tenant deployment
+- a custom Function App container definition that installs PowerShell and `ExchangeOnlineManagement`
 
-### 1.3 Create Storage Account
+The scaffold is intentionally non-destructive. The sync and property update endpoints currently validate input and return placeholder success payloads until the Exchange and MyGeotab implementation is rebuilt.
 
-```bash
-az storage account create \
-  --name fleetbridgestore \
-  --resource-group FleetBridgeRG \
-  --location australiaeast \
-  --sku Standard_LRS
-```
+Current implementation note:
 
-### 1.4 Create Function App
+- `sync-to-exchange` now contains the first real single-tenant flow
+- it fetches MyGeotab devices, resolves mailboxes by serial, updates display name from vehicle name, and applies first-sync visibility changes
+- the runtime dependency is now explicit: the Function App is deployed from a custom container image built from `function-app/Dockerfile`
 
-```bash
-az functionapp create \
-  --resource-group FleetBridgeRG \
-  --consumption-plan-location australiaeast \
-  --runtime python \
-  --runtime-version 3.11 \
-  --functions-version 4 \
-  --name fleetbridge-mygeotab \
-  --storage-account fleetbridgestore \
-  --os-type Linux
-```
+## Required Secrets
 
-### 1.5 Deploy the Function
+The active backend expects these Key Vault secrets:
 
-```bash
-cd azure-function
-func azure functionapp publish fleetbridge-mygeotab
-```
+- `MyGeotabDatabase`
+- `MyGeotabUsername`
+- `MyGeotabPassword`
+- `ExchangeCertificate`
+- `ExchangeCertificatePassword`
+- `EquipmentDomain`
 
-### 1.6 Get the Function URL and Key
+`ExchangeCertificate` should contain the base64-encoded contents of the PFX used for app-only Exchange authentication.
+`MYGEOTAB_SERVER` is non-secret config and is set from the Bicep parameter file.
 
-```bash
-# Get the function key
-az functionapp keys list \
-  --resource-group FleetBridgeRG \
-  --name fleetbridge-mygeotab \
-  --query "functionKeys.default" \
-  --output tsv
-```
+## Minimal Deployment Sequence
 
-The function URL will be:
-```
-https://exchange-calendar-processor.mangosmoke-ee55f1a9.australiaeast.azurecontainerapps.io/api/update-device-properties
-```
+1. Commit an environment parameter file under `infra/`.
+2. Run `scripts/deploy-function-app.sh <resource-group> <parameters-file>`.
+3. Run `scripts/seed-key-vault-secrets.sh <key-vault-name> <mygeotab-database> <mygeotab-username> <mygeotab-password> <exchange-pfx-path> <exchange-pfx-password> <equipment-domain>`.
+4. Confirm the Function App health endpoint responds.
+5. Configure the MyGeotab Add-In to use the Function App base URL.
 
-## Step 2: Configure CORS (Important!)
+## GitHub Actions Deployment
 
-The Add-In runs in MyGeotab's domain, so we need to allow CORS:
+`.github/workflows/deploy-single-tenant.yml` can deploy an environment end-to-end in one run.
 
-```bash
-az functionapp cors add \
-  --resource-group FleetBridgeRG \
-  --name fleetbridge-mygeotab \
-  --allowed-origins "https://*.geotab.com" "https://*.geotab.com.au"
-```
+Checked-in config:
 
-## Step 3: Update the Add-In Configuration
+- `infra/parameters.goa-test.json`
+- `infra/parameters.goa-prod.example.json`
 
-Edit `index.html` and update these lines (around line 1671):
+Required GitHub secrets:
 
-```javascript
-const FLEETBRIDGE_API_BASE = 'https://exchange-calendar-processor.mangosmoke-ee55f1a9.australiaeast.azurecontainerapps.io';
-const AZURE_FUNCTION_KEY = 'YOUR_FUNCTION_KEY_FROM_STEP_1.6';
-```
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `MYGEOTAB_DATABASE`
+- `MYGEOTAB_USERNAME`
+- `MYGEOTAB_PASSWORD`
+- `EXCHANGE_PFX_BASE64`
+- `EXCHANGE_PFX_PASSWORD`
 
-## Step 4: Commit and Push
+Workflow inputs:
 
-```bash
-git add index.html
-git commit -m "Configure Azure Function endpoint"
-git push origin main
-```
+- `resource_group`
+- `parameters_file`
+- optional `run_smoke_sync`
 
-## Step 5: Update configuration.json
+## Exchange Assumptions
 
-Update the commit hash in `configuration.json` to point to the latest commit:
+- Exchange mailboxes already exist
+- mailbox names and addresses are based on the MyGeotab serial
+- mailboxes start hidden
+- FleetBridge only reconciles and updates them
 
-```json
-{
-    "name": "FleetBridge Property Manager",
-    "supportEmail": "your-email@example.com",
-    "version": "6.0.0",
-    "items": [
-        {
-            "url": "https://raw.githubusercontent.com/Autotrace-au/FleetBridge-MyGeotab-AddIn/LATEST_COMMIT_HASH/index.html?v=6.0",
-            "path": "ActivityLink",
-            "menuName": {
-                "en": "FleetBridge Property Manager"
-            }
-        }
-    ]
-}
-```
+## Cleanup Result
 
-## Step 6: Test the Add-In
-
-1. **Remove the old Add-In** from MyGeotab (if installed)
-2. **Add the Add-In** using the updated configuration.json URL
-3. **Go to the Manage Assets tab**
-4. **Load assets**
-5. **Create a test group** with some properties
-6. **Assign an asset to the group**
-7. **Check the console** - you should see "Azure Function response: {success: true, ...}"
-8. **Verify in MyGeotab** - check the device's custom properties
-
-## Troubleshooting
-
-### CORS Errors
-
-If you see CORS errors in the console:
-
-```bash
-# Add more specific origins
-az functionapp cors add \
-  --resource-group FleetBridgeRG \
-  --name fleetbridge-mygeotab \
-  --allowed-origins "https://goac.geotab.com.au"
-```
-
-### Function Not Found
-
-Check the function is deployed:
-
-```bash
-az functionapp function list \
-  --resource-group FleetBridgeRG \
-  --name fleetbridge-mygeotab
-```
-
-### Authentication Errors
-
-The function uses the MyGeotab session ID for authentication. If you see authentication errors, it might be because:
-- The session has expired (user needs to refresh MyGeotab)
-- The session ID isn't being passed correctly
-
-Check the console logs to see what's being sent to the function.
-
-### View Function Logs
-
-```bash
-az functionapp log tail \
-  --resource-group FleetBridgeRG \
-  --name fleetbridge-mygeotab
-```
-
-Or view logs in the Azure Portal:
-1. Go to https://portal.azure.com
-2. Navigate to your Function App
-3. Click "Log stream" in the left menu
-
-## Local Testing
-
-You can test the Azure Function locally before deploying:
-
-```bash
-cd azure-function
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-func start
-```
-
-Then test with curl:
-
-```bash
-curl -X POST http://localhost:7071/api/update-device-properties \
-  -H "Content-Type: application/json" \
-  -d '{
-    "database": "your_database",
-    "username": "your_username",
-    "password": "your_password",
-    "deviceId": "b1",
-    "properties": {
-      "bookable": true,
-      "recurring": true,
-      "approvers": "email@example.com",
-      "fleetManagers": "",
-      "conflicts": false,
-      "windowDays": 3,
-      "maxDurationHours": 48,
-      "language": "en-AU"
-    }
-  }'
-```
-
-## Cost Estimate
-
-Azure Functions Consumption Plan pricing:
-- **First 1 million executions per month**: FREE
-- **After that**: $0.20 USD per million executions
-- **Memory**: $0.000016 USD per GB-second
-
-For typical usage (updating properties a few times per day):
-- **Estimated cost**: $0-5 USD per month
-
-## Security Considerations
-
-1. **Function Key**: Keep the function key secret. Don't commit it to public repositories.
-2. **CORS**: Only allow specific MyGeotab domains
-3. **Credentials**: Consider using Azure Key Vault for storing MyGeotab credentials in production
-4. **HTTPS Only**: The function only accepts HTTPS requests
-
-## Alternative: Use Existing Azure Resources
-
-If you already have Azure resources, you can:
-- Use an existing Resource Group
-- Use an existing Storage Account
-- Use an existing Function App (just deploy the function to it)
-
-Just adjust the commands above to use your existing resource names.
-
-## Need Help?
-
-- Check the Azure Function logs for detailed error messages
-- Check the browser console for client-side errors
-- Review the `azure-function/README.md` for more details on the function itself
-
+Container-app deployment scripts, SaaS onboarding scripts, and historical docs are preserved in `legacy/` but are not part of the active deployment path.
