@@ -29,8 +29,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      RESOURCE_GROUP: ${{ inputs.resource_group || 'FleetBridgeGOATestRG' }}
-      PARAMETERS_FILE: ${{ inputs.parameters_file || 'infra/parameters.goa-test.json' }}
+      RESOURCE_GROUP: ${{ github.event.inputs.resource_group || 'FleetBridgeGOATestRG' }}
+      PARAMETERS_FILE: ${{ github.event.inputs.parameters_file || 'infra/parameters.goa-test.json' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -109,7 +109,7 @@ PY
           curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
 
       - name: Smoke Test Sync
-        if: ${{ github.event_name == 'push' || inputs.run_smoke_sync == true }}
+        if: ${{ github.event_name == 'push' || github.event.inputs.run_smoke_sync == 'true' }}
         run: |
           FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
