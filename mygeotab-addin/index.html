@@ -461,24 +461,22 @@
                 <h2>Sync to Exchange Online</h2>
                 <div id="syncStatusMessage" class="status-message status-info">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                    <span>Configure Azure Function to enable synchronisation between MyGeotab devices and Exchange Online equipment mailboxes.</span>
+                    <span>Save your FleetBridge Function App URL to connect this Add-In to your tenant-specific backend.</span>
                 </div>
             </section>
 
             <section class="properties-section">
-                <h2>Azure Function Configuration</h2>
+                <h2>Function App Configuration</h2>
                 <p class="info-text">
-                    Enter your unique Client API Key provided by your FleetBridge administrator.
+                    Enter the base URL for your tenant's FleetBridge Azure Function App. This shared Add-In build is reused across customers, so each customer saves their own backend URL here.
                 </p>
                 
                 <div style="margin-bottom: 20px; padding: 14px; background-color: #dbeafe; border-left: 4px solid #3b82f6; border-radius: 6px; font-size: 13px; color: #1e3a8a;">
-                    <strong>📋 Contact your administrator for:</strong>
+                    <strong>Use the Function App base URL only:</strong>
                     <ul style="margin: 8px 0 0 20px; padding: 0;">
-                        <li><strong>Client API Key:</strong> Your unique client identifier (keep it secure!)</li>
+                        <li><strong>Example:</strong> https://fleetbridge-yourtenant.azurewebsites.net</li>
+                        <li>Do not include <strong>/api/health</strong> or any other path.</li>
                     </ul>
-                    <p style="margin: 8px 0 0 0; font-size: 12px;">
-                        Your API key uniquely identifies you and retrieves your MyGeotab credentials securely from the server.
-                    </p>
                 </div>
 
                 <div class="property-item">
@@ -489,11 +487,11 @@
                             </svg>
                         </div>
                         <div>
-                            <h3>Client API Key</h3>
-                            <p>Your unique client identifier (provided by administrator)</p>
+                            <h3>Function App URL</h3>
+                            <p>The FleetBridge backend URL for this tenant</p>
                         </div>
                     </div>
-                    <input type="password" id="clientApiKey" placeholder="Paste your unique API key here..." style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
+                    <input type="text" id="functionAppUrl" placeholder="https://your-function-app.azurewebsites.net" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
                 </div>
 
                 <div style="margin-top: 20px; display: flex; gap: 12px;">
@@ -517,9 +515,9 @@
             </section>
 
             <section class="properties-section">
-                <h2>Exchange Online Connection</h2>
+                <h2>Backend Connection Notes</h2>
                 <p class="info-text">
-                    Connect FleetBridge to your Microsoft Exchange Online. This is a one-time setup - you'll be redirected to Microsoft to securely grant permissions. No Azure/Entra setup required!
+                    Exchange Online access is handled entirely by the backend. Once this Add-In is connected to the correct Function App, sync requests use the server-side Exchange configuration for that tenant.
                 </p>
 
                 <div id="exchangeConnectionStatus" style="padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--border-color);">
@@ -529,25 +527,8 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        <span id="exchangeConnectionText">Please configure Azure Function settings above first.</span>
+                        <span id="exchangeConnectionText">Save and test the Function App URL above, then use Trigger Sync Now.</span>
                     </div>
-                </div>
-
-                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-                    <button id="connectExchangeBtn" class="btn btn-primary" disabled title="Save Azure Function configuration first">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-                        </svg>
-                        Connect to Exchange
-                    </button>
-                    <button id="disconnectExchangeBtn" class="btn btn-secondary" style="display: none;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                        Disconnect
-                    </button>
                 </div>
             </section>
 
@@ -775,8 +756,11 @@
             let api;
             let state;
 
-            // Updated to use Azure Container Apps instead of Azure Functions
-            const FLEETBRIDGE_FUNCTION_URL = 'https://exchange-calendar-processor.mangosmoke-ee55f1a9.australiaeast.azurecontainerapps.io';
+            const DEFAULT_FLEETBRIDGE_FUNCTION_URL = '';
+            const FLEETBRIDGE_ADDIN_DATA_ID = 'P6B8oQ6wQ5i2t1h5n3kJlg';
+            const FLEETBRIDGE_SETTINGS_KEY = 'settings';
+            const FUNCTION_URL_STORAGE_KEY = 'fleetSyncFunctionUrl';
+            const GROUPS_STORAGE_KEY = 'fleetSyncGroups';
 
             const REQUIRED_PROPERTIES = [
                 // Booking Configuration
@@ -794,6 +778,7 @@
 
             let existingProperties = [];
             let missingProperties = [];
+            let cachedSettingsRecordId = null;
 
             function initialize(apiInstance, stateInstance, callback) {
                 api = apiInstance;
@@ -808,10 +793,14 @@
                     setupEventListeners();
                 }
 
-                // Load saved configuration
-                loadWebhookUrl();
-
-                callback();
+                Promise.resolve(loadPersistedSettings())
+                    .catch(error => {
+                        console.warn('Failed to load persisted FleetBridge settings:', error);
+                    })
+                    .finally(() => {
+                        loadWebhookUrl();
+                        callback();
+                    });
             }
 
             function focus(apiInstance, stateInstance) {
@@ -849,12 +838,6 @@
                 if (testAzureFunctionBtn) testAzureFunctionBtn.addEventListener('click', testAzureFunctionConnection);
                 if (triggerSyncBtn) triggerSyncBtn.addEventListener('click', triggerSync);
 
-                // Exchange connection buttons
-                const connectExchangeBtn = document.getElementById('connectExchangeBtn');
-                const disconnectExchangeBtn = document.getElementById('disconnectExchangeBtn');
-                if (connectExchangeBtn) connectExchangeBtn.addEventListener('click', connectToExchange);
-                if (disconnectExchangeBtn) disconnectExchangeBtn.addEventListener('click', disconnectFromExchange);
-
                 // Tab switching
                 document.querySelectorAll('.tab-button').forEach(button => {
                     button.addEventListener('click', () => switchTab(button.dataset.tab));
@@ -862,7 +845,6 @@
 
                 // Load saved configuration on init
                 loadAzureFunctionConfig();
-                checkExchangeConnection();
             }
 
             function switchTab(tabName) {
@@ -1071,23 +1053,14 @@
             let assetChanges = {};
             let assetGroups = [];
 
-            // Load groups from localStorage
             function loadGroups() {
-                const stored = localStorage.getItem('fleetSyncGroups');
-                if (stored) {
-                    try {
-                        assetGroups = JSON.parse(stored);
-                    } catch (e) {
-                        console.error('Failed to load groups:', e);
-                        assetGroups = [];
-                    }
-                }
+                const settings = readLocalSettings();
+                assetGroups = settings.assetGroups;
                 return assetGroups;
             }
 
-            // Save groups to localStorage
             function saveGroups() {
-                localStorage.setItem('fleetSyncGroups', JSON.stringify(assetGroups));
+                void persistSettings();
             }
 
             // Create new group
@@ -1735,103 +1708,165 @@
             }
 
             /**
-             * Azure Function endpoint configuration
-             *
-             * IMPORTANT: For production, you should:
-             * 1. Create a separate private copy of this file with your actual function key
-             * 2. Host it on a private server or use MyGeotab's file upload feature
-             * 3. Never commit the function key to a public repository
-             *
-             * For now, replace YOUR_FUNCTION_KEY with your actual key from:
-             * az functionapp keys list --resource-group FleetBridgeRG --name fleetbridge-mygeotab
-             */
-            // Backend endpoint defaults. These will be replaced by the single-tenant Function App values.
-            const FLEETBRIDGE_API_BASE = 'https://exchange-calendar-processor.mangosmoke-ee55f1a9.australiaeast.azurecontainerapps.io';
-            // Leave blank until the Function App deployment and auth model are finalized.
-            const AZURE_FUNCTION_KEY = '';
-
-            /**
-             * Client API Key Configuration
-             *
-             * Option 1 - Single API Key (for single-client deployments):
-             * Set CLIENT_API_KEY to the client's API key. The Add-In will use this for all requests.
-             *
-             * Option 2 - No API Key (for testing or direct credentials):
-             * Leave CLIENT_API_KEY as null. The Add-In will send MyGeotab credentials with each request.
-             *
-             */
-            const CLIENT_API_KEY = null;  // Set to client's API key or leave as null
-
-            /**
              * Update device properties via the Azure backend to avoid MyGeotab JS SDK property update issues.
-             * This avoids the JsonSerializerException issues with the JavaScript SDK
-             *
-             * Configuration is loaded from localStorage (set in Sync to Exchange tab)
-             *
-             * Supports two authentication modes:
-             * 1. API Key (recommended): Client API Key is configured
-             * 2. Direct credentials (testing): No Client API Key configured
+             * This avoids the JsonSerializerException issues with the JavaScript SDK.
+             * The tenant-specific Function App URL is loaded from localStorage.
              */
+            function normalizeFunctionBaseUrl(url) {
+                let normalized = (url || '').trim();
+                normalized = normalized.replace(/\/$/, '');
+                normalized = normalized.replace(/\/api\/health$/i, '');
+                normalized = normalized.replace(/\/api\/update-device-properties$/i, '');
+                normalized = normalized.replace(/\/api\/sync-to-exchange$/i, '');
+                return normalized;
+            }
+
+            function apiCallAsync(method, params) {
+                return new Promise((resolve, reject) => {
+                    api.call(method, params, resolve, reject);
+                });
+            }
+
+            function readLocalSettings() {
+                let groups = [];
+                const storedGroups = localStorage.getItem(GROUPS_STORAGE_KEY);
+                if (storedGroups) {
+                    try {
+                        groups = JSON.parse(storedGroups);
+                    } catch (error) {
+                        console.warn('Failed to parse locally stored FleetBridge groups:', error);
+                    }
+                }
+
+                return {
+                    functionAppUrl: normalizeFunctionBaseUrl(localStorage.getItem(FUNCTION_URL_STORAGE_KEY) || DEFAULT_FLEETBRIDGE_FUNCTION_URL),
+                    assetGroups: Array.isArray(groups) ? groups : []
+                };
+            }
+
+            function writeLocalSettings(settings) {
+                localStorage.setItem(FUNCTION_URL_STORAGE_KEY, normalizeFunctionBaseUrl(settings.functionAppUrl || ''));
+                localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(settings.assetGroups || []));
+            }
+
+            async function loadPersistedSettings() {
+                const localSettings = readLocalSettings();
+                assetGroups = localSettings.assetGroups;
+
+                if (!api) {
+                    loadAzureFunctionConfig();
+                    return localSettings;
+                }
+
+                try {
+                    const records = await apiCallAsync('Get', {
+                        typeName: 'AddInData',
+                        search: {
+                            addInId: FLEETBRIDGE_ADDIN_DATA_ID
+                        }
+                    });
+
+                    const settingsRecord = (records || []).find(record => record.details && record.details.key === FLEETBRIDGE_SETTINGS_KEY);
+                    if (!settingsRecord) {
+                        loadAzureFunctionConfig();
+                        return localSettings;
+                    }
+
+                    cachedSettingsRecordId = settingsRecord.id || null;
+
+                    const persistedSettings = {
+                        functionAppUrl: normalizeFunctionBaseUrl(settingsRecord.details.functionAppUrl || localSettings.functionAppUrl),
+                        assetGroups: []
+                    };
+
+                    if (settingsRecord.details.assetGroupsJson) {
+                        try {
+                            const parsedGroups = JSON.parse(settingsRecord.details.assetGroupsJson);
+                            persistedSettings.assetGroups = Array.isArray(parsedGroups) ? parsedGroups : [];
+                        } catch (error) {
+                            console.warn('Failed to parse AddInData group payload:', error);
+                            persistedSettings.assetGroups = localSettings.assetGroups;
+                        }
+                    } else {
+                        persistedSettings.assetGroups = localSettings.assetGroups;
+                    }
+
+                    writeLocalSettings(persistedSettings);
+                    assetGroups = persistedSettings.assetGroups;
+                    loadAzureFunctionConfig();
+                    return persistedSettings;
+                } catch (error) {
+                    console.warn('AddInData settings load failed, using local storage fallback:', error);
+                    loadAzureFunctionConfig();
+                    return localSettings;
+                }
+            }
+
+            async function persistSettings() {
+                const settings = {
+                    functionAppUrl: getConfiguredFunctionUrl(),
+                    assetGroups: assetGroups
+                };
+
+                writeLocalSettings(settings);
+
+                if (!api) {
+                    return;
+                }
+
+                const entity = {
+                    addInId: FLEETBRIDGE_ADDIN_DATA_ID,
+                    details: {
+                        key: FLEETBRIDGE_SETTINGS_KEY,
+                        functionAppUrl: settings.functionAppUrl,
+                        assetGroupsJson: JSON.stringify(settings.assetGroups || [])
+                    }
+                };
+
+                try {
+                    if (cachedSettingsRecordId) {
+                        await apiCallAsync('Set', {
+                            typeName: 'AddInData',
+                            entity: {
+                                id: cachedSettingsRecordId,
+                                ...entity
+                            }
+                        });
+                    } else {
+                        const created = await apiCallAsync('Add', {
+                            typeName: 'AddInData',
+                            entity: entity
+                        });
+                        cachedSettingsRecordId = created && created.id ? created.id : cachedSettingsRecordId;
+                    }
+                } catch (error) {
+                    console.warn('AddInData settings save failed, local storage retained as fallback:', error);
+                }
+            }
+
+            function getConfiguredFunctionUrl() {
+                const savedUrl = localStorage.getItem(FUNCTION_URL_STORAGE_KEY) || DEFAULT_FLEETBRIDGE_FUNCTION_URL;
+                return normalizeFunctionBaseUrl(savedUrl);
+            }
+
             async function updateDeviceProperties(deviceId, properties) {
-                console.log('=== updateDeviceProperties START (v7.0 - Unified Azure Function) ===');
+                console.log('=== updateDeviceProperties START ===');
                 console.log('Device ID:', deviceId);
                 console.log('Properties to update:', JSON.stringify(properties, null, 2));
 
-                // Get configuration from localStorage (use same keys as triggerSync)
-                const azureFunctionUrl = localStorage.getItem('fleetSyncFunctionUrl') || FLEETBRIDGE_API_BASE;
-                const azureFunctionKey = localStorage.getItem('fleetSyncFunctionKey');
-                const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
-
-                console.log('Auth mode:', clientApiKey ? 'API Key' : 'Direct Credentials');
-
-                // Validate configuration
+                const azureFunctionUrl = getConfiguredFunctionUrl();
                 if (!azureFunctionUrl) {
-                    throw new Error('Azure Function URL not configured. Please configure it in the "Sync to Exchange" tab.');
+                    throw new Error('Function App URL not configured. Please configure it in the "Sync to Exchange" tab.');
                 }
 
-                // Function Key is optional for Container App deployments
-                // (only required for Azure Functions with function-level authentication)
-
                 try {
-                    let payload;
+                    const payload = {
+                        deviceId: deviceId,
+                        properties: properties
+                    };
+                    const endpoint = `${azureFunctionUrl}/api/update-device-properties`;
+                    console.log('Calling endpoint:', endpoint);
 
-                    if (clientApiKey) {
-                        // Mode 1: API Key authentication
-                        payload = {
-                            apiKey: clientApiKey,
-                            deviceId: deviceId,
-                            properties: properties
-                        };
-                        console.log('Using API key authentication');
-                    } else {
-                        // Mode 2: Direct credentials (for testing/migration)
-                        const credentials = api.getSession();
-                        payload = {
-                            database: credentials.database,
-                            username: credentials.userName,
-                            password: credentials.sessionId, // Use session ID instead of password
-                            deviceId: deviceId,
-                            properties: properties
-                        };
-                        console.log('Using direct credentials authentication');
-                        console.log('Database:', credentials.database);
-                    }
-
-                    console.log('Calling Azure Function...');
-                    
-                    // Build endpoint URL (remove /api/... if present, add /api/update-device-properties)
-                    let baseUrl = azureFunctionUrl.trim();
-                    // Normalize: strip trailing slashes only
-                    baseUrl = baseUrl.replace(/\/$/, '');
-                    
-                    // Add function key to query string only if provided (for Azure Functions)
-                    const endpoint = azureFunctionKey 
-                        ? `${baseUrl}/api/update-device-properties?code=${encodeURIComponent(azureFunctionKey)}`
-                        : `${baseUrl}/api/update-device-properties`;
-                    
-                    console.log('URL:', endpoint.replace(/code=[^&]+/, 'code=***'));
-
-                    // Call Azure Function
                     const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: {
@@ -1877,53 +1912,43 @@
             /**
              * Save Azure Function configuration to localStorage
              */
-            function saveAzureFunctionConfig() {
-                const apiKeyInput = document.getElementById('clientApiKey');
-                const apiKey = apiKeyInput.value.trim();
+            async function saveAzureFunctionConfig() {
+                const functionUrlInput = document.getElementById('functionAppUrl');
+                const functionUrl = normalizeFunctionBaseUrl(functionUrlInput.value);
 
-                if (!apiKey) {
-                    showAzureFunctionResult('Please enter your Client API Key.', 'error');
+                if (!functionUrl) {
+                    showAzureFunctionResult('Please enter your Function App URL.', 'error');
                     return;
                 }
 
-                // Save to localStorage (URL is hardcoded, no Function Key needed)
-                localStorage.setItem('fleetSyncFunctionUrl', FLEETBRIDGE_API_BASE);
-                localStorage.setItem('fleetSyncClientApiKey', apiKey);
+                try {
+                    const parsedUrl = new URL(functionUrl);
+                    if (parsedUrl.protocol !== 'https:') {
+                        throw new Error('Function App URL must use HTTPS.');
+                    }
+                } catch (error) {
+                    showAzureFunctionResult(error.message || 'Please enter a valid Function App URL.', 'error');
+                    return;
+                }
 
-                showAzureFunctionResult('Configuration saved successfully!', 'success');
-                
-                // Enable Exchange connection button now that config is saved
-                enableExchangeConnectionButton();
+                localStorage.setItem(FUNCTION_URL_STORAGE_KEY, functionUrl);
+                await persistSettings();
+                showAzureFunctionResult('Configuration saved successfully.', 'success');
+                showExchangeStatus('connected');
             }
 
             /**
              * Load Azure Function configuration from localStorage
              */
             function loadAzureFunctionConfig() {
-                const apiKeyInput = document.getElementById('clientApiKey');
-                const savedApiKey = localStorage.getItem('fleetSyncClientApiKey');
+                const functionUrlInput = document.getElementById('functionAppUrl');
+                const savedFunctionUrl = getConfiguredFunctionUrl();
 
-                if (savedApiKey) apiKeyInput.value = savedApiKey;
-                
-                // Enable Exchange connection button if config exists
-                if (savedApiKey) {
-                    enableExchangeConnectionButton();
-                }
-            }
-            
-            /**
-             * Enable the Exchange connection button
-             */
-            function enableExchangeConnectionButton() {
-                const connectBtn = document.getElementById('connectExchangeBtn');
-                if (connectBtn) {
-                    connectBtn.disabled = false;
-                    connectBtn.removeAttribute('title');
-                }
-                
-                const statusText = document.getElementById('exchangeConnectionText');
-                if (statusText) {
-                    statusText.textContent = 'Configuration saved. Server-side Exchange access will be used during sync.';
+                if (savedFunctionUrl && functionUrlInput) {
+                    functionUrlInput.value = savedFunctionUrl;
+                    showExchangeStatus('connected');
+                } else {
+                    showExchangeStatus('not_configured');
                 }
             }
 
@@ -1931,17 +1956,17 @@
              * Test Azure Function connection
              */
             async function testAzureFunctionConnection() {
-                const apiKey = document.getElementById('clientApiKey').value.trim();
+                const functionUrl = normalizeFunctionBaseUrl(document.getElementById('functionAppUrl').value);
 
-                if (!apiKey) {
-                    showAzureFunctionResult('Please enter your Client API Key before testing.', 'error');
+                if (!functionUrl) {
+                    showAzureFunctionResult('Please enter your Function App URL before testing.', 'error');
                     return;
                 }
 
                 try {
                     showAzureFunctionResult('Testing connection...', 'info');
 
-                    const response = await fetch(`${FLEETBRIDGE_API_BASE}/health`, {
+                    const response = await fetch(`${functionUrl}/api/health`, {
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json'
@@ -1954,11 +1979,14 @@
                             `Connection successful. Service status: ${data.status}.`,
                             'success'
                         );
+                        showExchangeStatus('connected');
                     } else {
-                        showAzureFunctionResult(`❌ Connection failed: ${response.status} ${response.statusText}`, 'error');
+                        showAzureFunctionResult(`Connection failed: ${response.status} ${response.statusText}`, 'error');
+                        showExchangeStatus('error', { error: `${response.status} ${response.statusText}` });
                     }
                 } catch (error) {
-                    showAzureFunctionResult(`❌ Connection failed: ${error.message}`, 'error');
+                    showAzureFunctionResult(`Connection failed: ${error.message}`, 'error');
+                    showExchangeStatus('error', { error: error.message });
                 }
             }
 
@@ -2012,12 +2040,11 @@
                 const syncSummary = document.getElementById('syncSummary');
                 const maxDevicesInput = document.getElementById('maxDevicesLimit');
 
-                // Get configuration
-                const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
+                const functionUrl = getConfiguredFunctionUrl();
                 const maxDevices = maxDevicesInput ? parseInt(maxDevicesInput.value) || 0 : 0;
 
-                if (!clientApiKey) {
-                    updateSyncStatus('Please configure and save Client API Key first.', 'error');
+                if (!functionUrl) {
+                    updateSyncStatus('Please configure and save the Function App URL first.', 'error');
                     return;
                 }
 
@@ -2029,13 +2056,8 @@
                     syncResultContainer.style.display = 'none';
                     updateSyncStatus('Synchronising with Exchange Online...', 'info');
 
-                    // Build endpoint URL using hardcoded Function URL
-                    const endpoint = `${FLEETBRIDGE_API_BASE}/api/sync-to-exchange`;
-
-                    // Build request body with Client API Key
-                    const requestBody = {
-                        apiKey: clientApiKey
-                    };
+                    const endpoint = `${functionUrl}/api/sync-to-exchange`;
+                    const requestBody = {};
 
                     if (maxDevices > 0) {
                         requestBody.maxDevices = maxDevices;
@@ -2112,12 +2134,11 @@
                         (isTimeout 
                             ? 'The sync may have completed successfully on the server despite the timeout.\nCheck your equipment mailboxes in Exchange Online.\n\nTo avoid timeouts:\n- Reduce the number of devices being synced\n- Check your network connection\n- The sync typically takes 30-60 seconds per device'
                             : 'Please check:\n' +
-                                '1. Container App is running and accessible\n' +
-                                '2. Client API Key is valid (or MyGeotab credentials are available)\n' +
-                                '3. Container App has been deployed with Exchange sync endpoint\n' +
-                                '4. Entra app registration is configured with proper permissions\n' +
-                                '5. Certificate is uploaded to Key Vault\n' +
-                                '6. Network connectivity to Azure Container Apps') +
+                                '1. Function App URL is correct\n' +
+                                '2. Function App is deployed and healthy\n' +
+                                '3. Backend Exchange configuration is valid\n' +
+                                '4. Key Vault secrets are present\n' +
+                                '5. Network connectivity to Azure Functions') +
                         '\n\nSee browser console for more details.';
                     syncResultContainer.style.display = 'block';
                 } finally {
@@ -2139,43 +2160,19 @@
             // Exchange Connection Functions
             // ===================================================================
 
-            async function checkExchangeConnection() {
-                const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
-                if (!clientApiKey) {
-                    showExchangeStatus('not_configured');
-                    return;
-                }
-
-                showExchangeStatus('connected');
-            }
-
             function showExchangeStatus(status, data = {}) {
                 const statusDiv = document.getElementById('exchangeConnectionStatus');
                 const statusText = document.getElementById('exchangeConnectionText');
-                const connectBtn = document.getElementById('connectExchangeBtn');
-                const disconnectBtn = document.getElementById('disconnectExchangeBtn');
                 
-                if (!statusDiv || !statusText || !connectBtn || !disconnectBtn) return;
+                if (!statusDiv || !statusText) return;
                 
                 switch(status) {
                     case 'connected':
                         statusDiv.style.background = '#d1fae5';
                         statusDiv.style.borderColor = '#10b981';
                         statusDiv.style.color = '#065f46';
-                        statusText.innerHTML = `<strong>✅ Connected to Exchange</strong><br>
-                            <span style="font-size: 12px;">This deployment uses server-side Exchange access. Save your API key and run a sync to verify mailbox updates.</span>`;
-                        connectBtn.style.display = 'none';
-                        disconnectBtn.style.display = 'none';
-                        break;
-                        
-                    case 'not_connected':
-                        statusDiv.style.background = '#fef3c7';
-                        statusDiv.style.borderColor = '#fbbf24';
-                        statusDiv.style.color = '#92400e';
-                        statusText.innerHTML = `<strong>⚠️ Not Connected to Exchange</strong><br>
-                            <span style="font-size: 12px;">Exchange access is not confirmed. Save your API key and test the service connection first.</span>`;
-                        connectBtn.style.display = 'inline-flex';
-                        disconnectBtn.style.display = 'none';
+                        statusText.innerHTML = `<strong>✅ Backend Ready</strong><br>
+                            <span style="font-size: 12px;">This Add-In is connected to a tenant-specific FleetBridge Function App. Trigger a sync to validate mailbox updates.</span>`;
                         break;
                         
                     case 'not_configured':
@@ -2183,10 +2180,7 @@
                         statusDiv.style.borderColor = '#3b82f6';
                         statusDiv.style.color = '#1e3a8a';
                         statusText.innerHTML = `<strong>ℹ️ Setup Required</strong><br>
-                            <span style="font-size: 12px;">Please save your FleetBridge API key above first.</span>`;
-                        connectBtn.disabled = true;
-                        connectBtn.style.display = 'inline-flex';
-                        disconnectBtn.style.display = 'none';
+                            <span style="font-size: 12px;">Save your tenant's Function App URL above first.</span>`;
                         break;
                         
                     case 'error':
@@ -2195,28 +2189,8 @@
                         statusDiv.style.color = '#991b1b';
                         statusText.innerHTML = `<strong>❌ Error</strong><br>
                             <span style="font-size: 12px;">${data.error || 'Unknown error'}</span>`;
-                        connectBtn.style.display = 'inline-flex';
-                        connectBtn.disabled = false;
-                        disconnectBtn.style.display = 'none';
                         break;
                 }
-            }
-
-            function connectToExchange() {
-                const clientApiKey = localStorage.getItem('fleetSyncClientApiKey');
-                
-                if (!clientApiKey) {
-                    alert('Please save your FleetBridge configuration first.');
-                    return;
-                }
-
-                showExchangeStatus('connected');
-                alert('Exchange connection is managed on the server for this deployment. Use "Trigger Sync Now" to validate the setup.');
-            }
-
-            async function disconnectFromExchange() {
-                showExchangeStatus('connected');
-                alert('Server-side Exchange access cannot be disconnected from this add-in.');
             }
 
             return {
