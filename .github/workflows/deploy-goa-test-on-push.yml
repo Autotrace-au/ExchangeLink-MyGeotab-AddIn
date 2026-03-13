@@ -44,26 +44,8 @@ jobs:
           MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
           EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
         run: |
-          KEY_VAULT_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"]["keyVaultName"]["value"])
-PY
-)"
-          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${PARAMETERS_FILE}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"]["equipmentDomain"]["value"])
-PY
-)"
+          KEY_VAULT_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["keyVaultName"]["value"])' "${PARAMETERS_FILE}")"
+          EQUIPMENT_DOMAIN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["equipmentDomain"]["value"])' "${PARAMETERS_FILE}")"
           bash ./scripts/seed-key-vault-secrets.sh \
             "${KEY_VAULT_NAME}" \
             "${MYGEOTAB_DATABASE}" \
@@ -75,30 +57,12 @@ PY
 
       - name: Smoke Test Health
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"]["functionAppName"]["value"])
-PY
-)"
+          FUNCTION_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["functionAppName"]["value"])' "${PARAMETERS_FILE}")"
           curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
 
       - name: Smoke Test Sync
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"]["functionAppName"]["value"])
-PY
-)"
+          FUNCTION_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["functionAppName"]["value"])' "${PARAMETERS_FILE}")"
           curl -fsS -X POST \
             "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-to-exchange" \
             -H 'Content-Type: application/json' \
