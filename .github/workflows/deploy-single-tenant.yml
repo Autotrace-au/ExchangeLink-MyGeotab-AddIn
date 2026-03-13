@@ -81,7 +81,24 @@ jobs:
         if: ${{ inputs.run_smoke_sync }}
         run: |
           FUNCTION_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["functionAppName"]["value"])' "${{ inputs.parameters_file }}")"
-          curl -fsS -X POST \
+          JOB_ID="$(curl -fsS -X POST \
             "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-to-exchange" \
             -H 'Content-Type: application/json' \
-            -d '{"maxDevices":1}'
+            -d '{"maxDevices":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')"
+          echo "Queued sync job: ${JOB_ID}"
+          for attempt in $(seq 1 60); do
+            STATUS_JSON="$(curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-status?jobId=${JOB_ID}")"
+            STATUS="$(printf '%s' "${STATUS_JSON}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+            echo "Sync status (${attempt}/60): ${STATUS}"
+            if [ "${STATUS}" = "completed" ]; then
+              printf '%s' "${STATUS_JSON}" | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data["failed"] == 0 else 1)'
+              exit 0
+            fi
+            if [ "${STATUS}" = "failed" ]; then
+              echo "${STATUS_JSON}"
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Sync job did not complete in time"
+          exit 1

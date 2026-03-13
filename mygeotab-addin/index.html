@@ -2054,7 +2054,7 @@
                     syncProgress.style.alignItems = 'center';
                     syncProgress.style.gap = '8px';
                     syncResultContainer.style.display = 'none';
-                    updateSyncStatus('Synchronising with Exchange Online...', 'info');
+                    updateSyncStatus('Queueing sync job...', 'info');
 
                     const endpoint = `${functionUrl}/api/sync-to-exchange`;
                     const requestBody = {};
@@ -2065,20 +2065,14 @@
 
                     console.log('Calling sync endpoint:', endpoint);
                     console.log('Request body:', requestBody);
-                    
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout (2 minutes)
-                    
+
                     const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify(requestBody),
-                        signal: controller.signal
+                        body: JSON.stringify(requestBody)
                     });
-                    
-                    clearTimeout(timeoutId);
 
                     const result = await response.json();
 
@@ -2086,65 +2080,141 @@
                         throw new Error(result.error || `HTTP ${response.status}: ${response.statusText}`);
                     }
 
-                    if (result.success) {
-                        updateSyncStatus(`Sync completed successfully! ${result.successful} of ${result.processed} devices updated.`, 'success');
-                        
-                        // Display summary
-                        syncSummary.innerHTML = `
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px;">
-                                <div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">
-                                    <div style="font-size: 24px; font-weight: bold; color: #1e3a8a;">${result.processed}</div>
-                                    <div style="font-size: 12px; color: #1e40af;">Devices Processed</div>
-                                </div>
-                                <div style="padding: 12px; background-color: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;">
-                                    <div style="font-size: 24px; font-weight: bold; color: #065f46;">${result.successful}</div>
-                                    <div style="font-size: 12px; color: #047857;">Successful Updates</div>
-                                </div>
-                                <div style="padding: 12px; background-color: #fef2f2; border: 1px solid #ef4444; border-radius: 6px;">
-                                    <div style="font-size: 24px; font-weight: bold; color: #991b1b;">${result.failed}</div>
-                                    <div style="font-size: 12px; color: #b91c1c;">Failed Updates</div>
-                                </div>
-                                <div style="padding: 12px; background-color: #fafafa; border: 1px solid #9ca3af; border-radius: 6px;">
-                                    <div style="font-size: 24px; font-weight: bold; color: #374151;">${result.executionTimeMs ? Math.round(result.executionTimeMs / 1000) : 0}s</div>
-                                    <div style="font-size: 12px; color: #4b5563;">Execution Time</div>
-                                </div>
-                            </div>
-                        `;
-
-                        // Display detailed results
-                        syncResult.textContent = JSON.stringify(result.results, null, 2);
-                        syncResultContainer.style.display = 'block';
-                    } else {
-                        throw new Error(result.error || 'Unknown error occurred');
+                    if (!result.jobId) {
+                        throw new Error('Sync job was not created');
                     }
+
+                    updateSyncStatus(`Sync job queued. Job ID: ${result.jobId}`, 'info');
+                    syncResultContainer.style.display = 'block';
+                    syncSummary.innerHTML = '<div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">Waiting for background sync job to start...</div>';
+                    syncResult.textContent = JSON.stringify({ jobId: result.jobId, statusUrl: result.statusUrl }, null, 2);
+
+                    const finalStatus = await pollSyncJob(functionUrl, result.jobId, updateSyncStatus, syncSummary, syncResult);
+                    renderSyncResult(finalStatus, syncSummary, syncResult, syncResultContainer);
 
                 } catch (error) {
                     console.error('Sync error:', error);
-                    
-                    // Check if this was a timeout abort
-                    const isTimeout = error.name === 'AbortError';
-                    const errorMsg = isTimeout 
-                        ? `Request timed out after 120 seconds. The sync is still processing on the server. Please check your equipment mailboxes in Exchange or try again with fewer devices.`
-                        : error.message;
-                    
-                    updateSyncStatus(`Sync failed: ${errorMsg}`, 'error');
+                    updateSyncStatus(`Sync failed: ${error.message}`, 'error');
                     
                     syncSummary.innerHTML = '';
-                    syncResult.textContent = `Error: ${errorMsg}\n\n` +
-                        (isTimeout 
-                            ? 'The sync may have completed successfully on the server despite the timeout.\nCheck your equipment mailboxes in Exchange Online.\n\nTo avoid timeouts:\n- Reduce the number of devices being synced\n- Check your network connection\n- The sync typically takes 30-60 seconds per device'
-                            : 'Please check:\n' +
-                                '1. Function App URL is correct\n' +
-                                '2. Function App is deployed and healthy\n' +
-                                '3. Backend Exchange configuration is valid\n' +
-                                '4. Key Vault secrets are present\n' +
-                                '5. Network connectivity to Azure Functions') +
-                        '\n\nSee browser console for more details.';
+                    syncResult.textContent = `Error: ${error.message}\n\nPlease check:\n1. Function App URL is correct\n2. Function App is deployed and healthy\n3. Backend Exchange configuration is valid\n4. Key Vault secrets are present\n5. Network connectivity to Azure Functions\n\nSee browser console for more details.`;
                     syncResultContainer.style.display = 'block';
                 } finally {
                     triggerBtn.disabled = false;
                     syncProgress.style.display = 'none';
                 }
+            }
+
+            function normalizeSyncResults(results) {
+                if (Array.isArray(results)) {
+                    return results;
+                }
+
+                if (results && typeof results === 'object' && Array.isArray(results.keptResults)) {
+                    return results.keptResults;
+                }
+
+                return [];
+            }
+
+            function formatSyncResultLabel(item) {
+                return item.vehicleName || item.displayName || item.serial || item.primarySmtpAddress || item.deviceId || 'Unidentified';
+            }
+
+            function renderSyncResults(results, resultElement) {
+                const normalizedResults = normalizeSyncResults(results);
+
+                if (!normalizedResults.length) {
+                    resultElement.textContent = 'No detailed sync results were returned for this job yet.';
+                    return;
+                }
+
+                const lines = normalizedResults.map(item => {
+                    const label = formatSyncResultLabel(item);
+                    const serial = item.serial ? `Serial: ${item.serial}` : 'Serial: n/a';
+                    const mailbox = item.primarySmtpAddress ? `Mailbox: ${item.primarySmtpAddress}` : 'Mailbox: n/a';
+                    const status = item.success ? 'Success' : 'Failed';
+                    const message = item.message || 'No message returned';
+                    return `${label}\n  ${serial}\n  ${mailbox}\n  Status: ${status}\n  Message: ${message}`;
+                });
+
+                resultElement.textContent = lines.join('\n\n');
+            }
+
+            async function pollSyncJob(functionUrl, jobId, statusUpdater, summaryElement, resultElement) {
+                const pollEndpoint = `${functionUrl}/api/sync-status?jobId=${encodeURIComponent(jobId)}`;
+                const maxPollAttempts = 180;
+
+                for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+                    const response = await fetch(pollEndpoint, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        throw new Error(payload.error || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const processed = payload.processed || 0;
+                    const successful = payload.successful || 0;
+                    const failed = payload.failed || 0;
+                    const status = payload.status || 'unknown';
+
+                    statusUpdater(`Sync job ${status}. Processed ${processed}, successful ${successful}, failed ${failed}.`, status === 'failed' ? 'error' : 'info');
+                    summaryElement.innerHTML = `
+                        <div style="padding: 12px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
+                            <div><strong>Job ID:</strong> ${jobId}</div>
+                            <div><strong>Status:</strong> ${status}</div>
+                            <div><strong>Processed:</strong> ${processed}</div>
+                            <div><strong>Successful:</strong> ${successful}</div>
+                            <div><strong>Failed:</strong> ${failed}</div>
+                        </div>
+                    `;
+                    renderSyncResults(payload.results, resultElement);
+
+                    if (status === 'completed' || status === 'failed') {
+                        return payload;
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+
+                throw new Error('Sync job polling timed out before completion.');
+            }
+
+            function renderSyncResult(result, syncSummary, syncResult, syncResultContainer) {
+                const statusType = result.status === 'completed' && !result.failed ? 'success' : (result.status === 'failed' ? 'error' : 'warning');
+                updateSyncStatus(result.message || `Sync job ${result.status}`, statusType);
+
+                syncSummary.innerHTML = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                        <div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #1e3a8a;">${result.processed || 0}</div>
+                            <div style="font-size: 12px; color: #1e40af;">Devices Processed</div>
+                        </div>
+                        <div style="padding: 12px; background-color: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #065f46;">${result.successful || 0}</div>
+                            <div style="font-size: 12px; color: #047857;">Successful Updates</div>
+                        </div>
+                        <div style="padding: 12px; background-color: #fef2f2; border: 1px solid #ef4444; border-radius: 6px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #991b1b;">${result.failed || 0}</div>
+                            <div style="font-size: 12px; color: #b91c1c;">Failed Updates</div>
+                        </div>
+                        <div style="padding: 12px; background-color: #fafafa; border: 1px solid #9ca3af; border-radius: 6px;">
+                            <div style="font-size: 24px; font-weight: bold; color: #374151;">${result.executionTimeMs ? Math.round(result.executionTimeMs / 1000) : 0}s</div>
+                            <div style="font-size: 12px; color: #4b5563;">Execution Time</div>
+                        </div>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted);">
+                        <strong>Job ID:</strong> ${result.jobId || 'n/a'}
+                        ${result.resultsTruncated ? '<br><strong>Note:</strong> Detailed results were truncated for storage.' : ''}
+                    </div>
+                `;
+                renderSyncResults(result.results, syncResult);
+                syncResultContainer.style.display = 'block';
             }
 
             function updateSyncStatus(message, type) {

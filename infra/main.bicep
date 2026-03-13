@@ -57,6 +57,13 @@ param exchangeCertificateSecretName string = 'ExchangeCertificate'
 @description('Optional object ID of the deployment principal that needs Key Vault secret write access.')
 param deploymentPrincipalObjectId string = ''
 
+@description('Principal type for the deployment principal role assignment.')
+@allowed([
+  'ServicePrincipal'
+  'User'
+])
+param deploymentPrincipalType string = 'ServicePrincipal'
+
 @description('Allowed CORS origins for the Function App.')
 param allowedCorsOrigins array = [
   'https://*.geotab.com'
@@ -241,7 +248,7 @@ resource keyVaultSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@202
   scope: keyVault
   properties: {
     principalId: deploymentPrincipalObjectId
-    principalType: 'ServicePrincipal'
+    principalType: deploymentPrincipalType
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'

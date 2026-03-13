@@ -31,16 +31,22 @@ if [ -f "${REPO_ROOT}/${PARAMETERS_FILE}" ]; then
 fi
 
 DEPLOYMENT_PRINCIPAL_OBJECT_ID="${DEPLOYMENT_PRINCIPAL_OBJECT_ID:-}"
+DEPLOYMENT_PRINCIPAL_TYPE="${DEPLOYMENT_PRINCIPAL_TYPE:-}"
 if [ -z "${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" ]; then
   if DEPLOYMENT_PRINCIPAL_OBJECT_ID="$(az ad signed-in-user show --query id -o tsv 2>/dev/null)"; then
-    :
+    DEPLOYMENT_PRINCIPAL_TYPE="User"
   elif [ -n "${AZURE_CLIENT_ID:-}" ]; then
     DEPLOYMENT_PRINCIPAL_OBJECT_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
+    DEPLOYMENT_PRINCIPAL_TYPE="ServicePrincipal"
   else
     echo "Could not determine deployment principal object ID."
     echo "Set DEPLOYMENT_PRINCIPAL_OBJECT_ID or AZURE_CLIENT_ID before running this script."
     exit 1
   fi
+fi
+
+if [ -z "${DEPLOYMENT_PRINCIPAL_TYPE}" ]; then
+  DEPLOYMENT_PRINCIPAL_TYPE="ServicePrincipal"
 fi
 
 echo "Deploying Azure resources to resource group: ${RESOURCE_GROUP}"
@@ -65,7 +71,8 @@ az deployment group create \
   --resource-group "${RESOURCE_GROUP}" \
   --template-file "${REPO_ROOT}/infra/main.bicep" \
   --parameters @"${PARAMETERS_PATH}" \
-  --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}"
+  --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" \
+  --parameters deploymentPrincipalType="${DEPLOYMENT_PRINCIPAL_TYPE}"
 
 FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
 import json
@@ -131,6 +138,7 @@ az deployment group create \
   --template-file "${REPO_ROOT}/infra/main.bicep" \
   --parameters @"${PARAMETERS_PATH}" \
   --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" \
+  --parameters deploymentPrincipalType="${DEPLOYMENT_PRINCIPAL_TYPE}" \
   --parameters functionImageTag="${IMAGE_TAG}" \
   >/dev/null
 
