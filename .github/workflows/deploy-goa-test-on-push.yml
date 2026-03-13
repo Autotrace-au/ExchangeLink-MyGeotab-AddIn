@@ -13,6 +13,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: FleetBridgeGOATestRG
       PARAMETERS_FILE: infra/parameters.goa-test.json
     steps:
