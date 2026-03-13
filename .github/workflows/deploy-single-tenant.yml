@@ -1,6 +1,9 @@
 name: Deploy Single-Tenant Function App
 
-on:
+"on":
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       resource_group:
@@ -25,6 +28,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: ${{ inputs.resource_group || 'FleetBridgeGOATestRG' }}
+      PARAMETERS_FILE: ${{ inputs.parameters_file || 'infra/parameters.goa-test.json' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +45,7 @@ jobs:
       - name: Deploy Function App Infrastructure and Image
         env:
           FUNCTION_IMAGE_TAG_OVERRIDE: ${{ github.sha }}
-        run: bash ./scripts/deploy-function-app.sh "${{ inputs.resource_group }}" "${{ inputs.parameters_file }}"
+        run: bash ./scripts/deploy-function-app.sh "${RESOURCE_GROUP}" "${PARAMETERS_FILE}"
 
       - name: Decode Exchange Certificate
         env:
@@ -58,7 +64,7 @@ jobs:
           MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
           EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
         run: |
-          KEY_VAULT_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          KEY_VAULT_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -68,7 +74,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 print(data["parameters"]["keyVaultName"]["value"])
 PY
 )"
-          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -90,7 +96,7 @@ PY
 
       - name: Smoke Test Health
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -103,9 +109,9 @@ PY
           curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
 
       - name: Smoke Test Sync
-        if: ${{ inputs.run_smoke_sync }}
+        if: ${{ github.event_name == 'push' || inputs.run_smoke_sync == true }}
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
