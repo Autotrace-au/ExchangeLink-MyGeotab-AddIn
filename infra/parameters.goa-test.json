@@ -23,6 +23,12 @@
     "appServicePlanName": {
       "value": "fb-goa-test-20260313-plan"
     },
+    "appServicePlanSkuName": {
+      "value": "B2"
+    },
+    "appServicePlanSkuTier": {
+      "value": "Basic"
+    },
     "containerRegistryName": {
       "value": "fbgoatest20260313acr"
     },

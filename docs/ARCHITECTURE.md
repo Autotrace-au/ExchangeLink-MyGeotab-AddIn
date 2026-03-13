@@ -2,78 +2,137 @@
 
 ## Scope
 
-FleetBridge is now scoped as a single-tenant, self-hosted integration for one customer environment.
+FleetBridge is designed as a single-tenant integration for one MyGeotab database and one Microsoft 365 tenant.
+
+This is not currently a SaaS multi-tenant platform. Each deployment is customer-specific, but the MyGeotab Add-In codebase is shared. The customer connects the shared Add-In to their own backend by entering their Function App URL.
 
 ## Active Components
 
-1. `mygeotab-addin/`
-   The browser-based UI used inside MyGeotab.
-2. `function-app/`
-   The Azure Function backend that receives sync requests and reconciles Exchange mailbox state.
-3. Exchange Online
-   The customer's own Microsoft 365 tenant containing the equipment mailboxes.
-4. Azure Key Vault
-   Stores secrets required by the Function App.
+### MyGeotab Add-In
+
+The Add-In runs inside MyGeotab and is responsible for:
+
+- creating and checking FleetBridge custom property definitions
+- editing FleetBridge booking properties on assets
+- saving the customer Function App URL
+- starting Exchange sync jobs
+- polling sync job status and rendering results
+
+### Azure Function App
+
+The Function App is the backend control plane. It is responsible for:
+
+- health reporting
+- updating MyGeotab device custom properties
+- queueing async sync jobs
+- processing sync jobs in the background
+- reading MyGeotab devices
+- reconciling Exchange Online mailbox settings
+
+The Function App is deployed as a custom Linux container so the runtime includes:
+
+- Python
+- PowerShell
+- `ExchangeOnlineManagement`
+
+### Azure Storage
+
+Azure Storage is used for:
+
+- Function runtime storage
+- queue-backed async sync jobs
+- job status persistence in Table Storage
+
+### Azure Key Vault
+
+Key Vault stores deployment secrets such as:
+
+- MyGeotab credentials
+- Exchange certificate material
+- Exchange certificate password
+
+### Exchange Online
+
+Exchange Online contains the customer’s equipment mailboxes and is the target system for booking configuration updates.
 
 ## Mailbox Lifecycle
 
-1. An administrator manually creates the equipment mailbox using the MyGeotab serial.
-2. The mailbox is created hidden from address lists.
-3. FleetBridge sync finds the mailbox by serial-based identity.
-4. FleetBridge updates mailbox settings and booking configuration from MyGeotab data.
-5. On first successful sync, FleetBridge makes the mailbox visible.
+1. A customer administrator manually creates an equipment mailbox in Exchange Online.
+2. The mailbox identity is based on the MyGeotab serial.
+3. The mailbox starts hidden from address lists.
+4. FleetBridge reads the corresponding MyGeotab device during sync.
+5. FleetBridge finds the mailbox by serial.
+6. FleetBridge updates mailbox settings from MyGeotab custom properties.
+7. FleetBridge updates the Exchange display name from the MyGeotab vehicle name.
+8. On first successful sync, FleetBridge can make the mailbox visible.
 
-## Backend Responsibilities
+FleetBridge does not create the mailbox.
 
-The Function App is responsible for:
+## Sync Model
 
-- updating MyGeotab device properties when requested by the Add-In
-- running sync from MyGeotab to Exchange Online
-- applying mailbox configuration to existing mailboxes
-- making eligible hidden mailboxes visible on first sync
-- exposing health endpoints for operations
+### Identity and matching
 
-The Function App is not responsible for:
+- mailbox lookup key: MyGeotab serial
+- human-readable name source: MyGeotab vehicle name
 
-- creating Exchange mailboxes
-- multi-tenant onboarding
-- SaaS consent flows
-- per-client API key management
+The serial is the stable system identifier. The vehicle name is a mutable label and is updated over time.
 
-## Current Implementation State
+### Execution model
 
-The active backend code is currently a scaffold:
+Sync is asynchronous.
 
-- endpoint names match the existing Add-In contract
-- `health` is operational
-- `update-device-properties` validates requests and returns a placeholder response
-- `sync-to-exchange` now performs the single-tenant reconciliation flow using MyGeotab device data and an Exchange PowerShell bridge
+1. The Add-In calls `POST /api/sync-to-exchange`.
+2. The Function App creates a job record and enqueues work.
+3. A queue-triggered worker processes the job in the background.
+4. The Add-In polls `GET /api/sync-status?jobId=...`.
+5. Final per-device results are read from persisted job state.
 
-This keeps the migration incremental while the real MyGeotab and Exchange logic is rebuilt for the new single-tenant baseline.
+This avoids browser timeouts for larger environments.
 
-## Runtime Model
+## MyGeotab Property Model
 
-The Function App runtime is explicitly containerized so that:
+FleetBridge stores booking-related configuration as MyGeotab device custom properties. These include:
 
-- Python hosts the HTTP functions
-- PowerShell is available for Exchange Online operations
-- `ExchangeOnlineManagement` is installed as part of the image build
+- Enable Equipment Booking
+- Allow Recurring Bookings
+- Booking Approvers
+- Fleet Managers
+- Allow Double Booking
+- Booking Window (Days)
+- Maximum Booking Duration (Hours)
+- Mailbox Language
+
+The Add-In edits these values and the Function App persists them back to MyGeotab.
 
 ## Configuration Boundaries
 
-Non-secret configuration should live in infrastructure parameters and app settings, for example:
+### Non-secret configuration
 
-- Exchange tenant identifiers
-- equipment mailbox domain
+Non-secret configuration belongs in Bicep parameters and Function App settings, for example:
+
+- Azure region
+- equipment domain
+- Exchange tenant and client identifiers
 - default timezone
-- visibility-on-first-sync flag
-- allowed CORS origins
+- make-visible-on-first-sync flag
+- CORS origins
+- image name and ACR settings
 
-Secrets should live in Key Vault, for example:
+### Secret configuration
 
-- MyGeotab credentials
-- Exchange certificate or app secret
+Secret configuration belongs in Key Vault or GitHub repository secrets, for example:
 
-## Legacy Boundary
+- MyGeotab database
+- MyGeotab username
+- MyGeotab password
+- Exchange PFX contents
+- Exchange PFX password
 
-The prior container-app and SaaS-oriented implementation has been moved to `legacy/` and is not part of the active target architecture.
+## Operational Boundaries
+
+FleetBridge is responsible for:
+
+- property definition management
+- property updates on devices
+- mailbox reconciliation
+- job tracking and health checks

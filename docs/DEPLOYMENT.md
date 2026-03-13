@@ -1,81 +1,77 @@
-# Deployment Baseline
+# Deployment
 
 ## Deployment Target
 
-FleetBridge is being standardized on Azure Function App for the single-tenant product.
+FleetBridge is deployed as a single-tenant Azure Function App environment.
 
-## Intended Azure Resources
+The active deployment target includes:
 
 - Resource Group
 - Storage Account
-- Function App
 - Key Vault
-- Managed Identity
 - Azure Container Registry
+- Linux Function App on a Dedicated App Service plan
+- managed identity
+- required Azure role assignments
 
-## Deployment Model
+Current baseline:
 
-The preferred deployment model is:
+- Linux Dedicated B2 App Service plan
+- custom container Function App runtime
 
-1. Provision Azure resources from `infra/`
-2. Deploy Function App code from `function-app/`
-3. Populate Key Vault secrets
-4. Configure the MyGeotab Add-In with the Function App endpoint
-5. Run first sync against pre-created hidden mailboxes
+## Deployment Method
 
-A thin deployment wrapper is available at `scripts/deploy-function-app.sh`.
-A Key Vault seeding helper is available at `scripts/seed-key-vault-secrets.sh`.
-The one-run CI entry point is `.github/workflows/deploy-single-tenant.yml`.
-A bootstrap helper is available at `scripts/bootstrap-github-actions.sh`.
+The preferred deployment method is GitHub Actions with configuration in source control and secrets in GitHub and Key Vault.
 
-## Current Baseline
+Primary workflow:
 
-The repository now includes:
+- [deploy-single-tenant.yml](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/.github/workflows/deploy-single-tenant.yml)
 
-- a minimal Function App scaffold that exposes `health`, `update-device-properties`, and `sync-to-exchange`
-- an initial `main.bicep` template for the Azure resources required by the single-tenant deployment
-- a custom Function App container definition that installs PowerShell and `ExchangeOnlineManagement`
+Supporting scripts:
 
-The scaffold is intentionally non-destructive. The sync and property update endpoints currently validate input and return placeholder success payloads until the Exchange and MyGeotab implementation is rebuilt.
+- [bootstrap-github-actions.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/bootstrap-github-actions.sh)
+- [deploy-function-app.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/deploy-function-app.sh)
+- [seed-key-vault-secrets.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/seed-key-vault-secrets.sh)
 
-Current implementation note:
+## Configuration As Code Split
 
-- `sync-to-exchange` now contains the first real single-tenant flow
-- it fetches MyGeotab devices, resolves mailboxes by serial, updates display name from vehicle name, and applies first-sync visibility changes
-- the runtime dependency is now explicit: the Function App is deployed from a custom container image built from `function-app/Dockerfile`
+### In source control
+
+- Bicep templates
+- environment parameter files
+- GitHub Actions workflow definitions
+- Function App code
+- Add-In code
+
+### In GitHub secrets / Key Vault
+
+- Azure federated deployment identity values
+- MyGeotab credentials
+- Exchange PFX contents
+- Exchange PFX password
+
+## Required Azure Inputs
+
+Before deployment, define or confirm:
+
+- target subscription
+- target resource group name
+- Azure region
+- naming values required by the parameter file
+- Exchange tenant ID
+- Exchange client ID
+- equipment domain
+- default timezone
+- whether to make mailboxes visible on first successful sync
+
+Environment parameters live under `infra/`, for example:
+
+- [parameters.goa-test.json](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/infra/parameters.goa-test.json)
+- [parameters.goa-prod.example.json](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/infra/parameters.goa-prod.example.json)
 
 ## Required Secrets
 
-The active backend expects these Key Vault secrets:
-
-- `MyGeotabDatabase`
-- `MyGeotabUsername`
-- `MyGeotabPassword`
-- `ExchangeCertificate`
-- `ExchangeCertificatePassword`
-- `EquipmentDomain`
-
-`ExchangeCertificate` should contain the base64-encoded contents of the PFX used for app-only Exchange authentication.
-`MYGEOTAB_SERVER` is non-secret config and is set from the Bicep parameter file.
-
-## Minimal Deployment Sequence
-
-1. Commit an environment parameter file under `infra/`.
-2. Run `scripts/deploy-function-app.sh <resource-group> <parameters-file>`.
-3. Run `scripts/seed-key-vault-secrets.sh <key-vault-name> <mygeotab-database> <mygeotab-username> <mygeotab-password> <exchange-pfx-path> <exchange-pfx-password> <equipment-domain>`.
-4. Confirm the Function App health endpoint responds.
-5. Configure the MyGeotab Add-In to use the Function App base URL.
-
-## GitHub Actions Deployment
-
-`.github/workflows/deploy-single-tenant.yml` can deploy an environment end-to-end in one run.
-
-Checked-in config:
-
-- `infra/parameters.goa-test.json`
-- `infra/parameters.goa-prod.example.json`
-
-Required GitHub secrets:
+GitHub repository secrets required by the workflow:
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
@@ -86,23 +82,70 @@ Required GitHub secrets:
 - `EXCHANGE_PFX_BASE64`
 - `EXCHANGE_PFX_PASSWORD`
 
-Bootstrap option:
+The deployment workflow seeds Key Vault with the runtime secrets expected by the Function App.
 
-- `scripts/bootstrap-github-actions.sh` can create the Azure OIDC deployment identity, assign Azure roles, generate an Exchange PFX, append it to the Exchange app registration, and write the required GitHub repository secrets.
+## End-To-End Deployment Flow
 
-Workflow inputs:
+1. Bootstrap GitHub Actions Azure trust and repository secrets.
+2. Commit or select the target `infra` parameter file.
+3. Run the GitHub Actions deployment workflow.
+4. Provision Azure resources from Bicep.
+5. Build and push the Function App image.
+6. Configure the Function App to use that image.
+7. Seed Key Vault secrets.
+8. Run health and sync smoke tests.
+9. Enter the Function App base URL into the MyGeotab Add-In.
 
-- `resource_group`
-- `parameters_file`
-- optional `run_smoke_sync`
+## Post-Deployment Steps In The Client Tenant
 
-## Exchange Assumptions
+After Azure deployment is complete:
 
-- Exchange mailboxes already exist
-- mailbox names and addresses are based on the MyGeotab serial
-- mailboxes start hidden
-- FleetBridge only reconciles and updates them
+1. Ensure the Exchange equipment mailboxes already exist.
+2. Ensure each mailbox is based on the MyGeotab serial.
+3. Ensure each mailbox starts hidden.
+4. Open the MyGeotab Add-In.
+5. Enter and save the customer Function App URL.
+6. Run a limited sync test.
+7. Confirm:
+   - property updates apply from Manage Assets
+   - sync jobs complete successfully
+   - display names match vehicle names
+   - hidden mailboxes are made visible when expected
 
-## Cleanup Result
+## Runtime Behaviour
 
-Container-app deployment scripts, SaaS onboarding scripts, and historical docs are preserved in `legacy/` but are not part of the active deployment path.
+### Property updates
+
+`POST /api/update-device-properties` writes FleetBridge custom property values back to MyGeotab devices.
+
+### Sync
+
+`POST /api/sync-to-exchange` creates an async job and returns a `jobId`.
+
+`GET /api/sync-status` reports:
+
+- queued
+- running
+- completed
+- failed
+
+with processed counts and per-device results.
+
+## Smoke Test Expectations
+
+A healthy deployment should satisfy all of the following:
+
+- `GET /api/health` returns `healthy`
+- `pwshAvailable` is `true`
+- MyGeotab configuration is detected
+- Exchange tenant and client configuration are detected
+- `POST /api/sync-to-exchange` returns `202 Accepted`
+- `GET /api/sync-status` reaches `completed` for a small test batch
+
+## Known Operational Constraint
+
+The deployment pipeline rebuilds the custom Function App image on each deploy. That makes deployments slower than a plain zip-based Functions deployment, but it is required because the runtime must include PowerShell and `ExchangeOnlineManagement`.
+
+## Legacy
+
+Container App and SaaS deployment assets remain under `legacy/` and are not part of the active deployment path.

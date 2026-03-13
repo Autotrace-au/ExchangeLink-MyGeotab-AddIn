@@ -21,6 +21,12 @@ param keyVaultName string
 @description('App Service plan name.')
 param appServicePlanName string = '${appName}-${environmentName}-plan'
 
+@description('App Service plan SKU name.')
+param appServicePlanSkuName string = 'B2'
+
+@description('App Service plan SKU tier.')
+param appServicePlanSkuTier string = 'Basic'
+
 @description('Azure Container Registry name.')
 param containerRegistryName string
 
@@ -117,8 +123,8 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
   location: location
   sku: {
-    name: 'EP1'
-    tier: 'ElasticPremium'
+    name: appServicePlanSkuName
+    tier: appServicePlanSkuTier
   }
   kind: 'functionapp'
   properties: {
