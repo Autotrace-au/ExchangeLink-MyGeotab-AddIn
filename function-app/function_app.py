@@ -39,6 +39,28 @@ PROPERTY_NAME_MAP = {
     "Mailbox Language": "language",
 }
 
+UPDATE_PROPERTY_NAME_MAP = {
+    "bookable": "Enable Equipment Booking",
+    "recurring": "Allow Recurring Bookings",
+    "approvers": "Booking Approvers",
+    "fleetManagers": "Fleet Managers",
+    "conflicts": "Allow Double Booking",
+    "windowDays": "Booking Window (Days)",
+    "maxDurationHours": "Maximum Booking Duration (Hours)",
+    "language": "Mailbox Language",
+}
+
+DEFAULT_PROPERTY_VALUES = {
+    "bookable": False,
+    "recurring": False,
+    "approvers": "",
+    "fleetManagers": "",
+    "conflicts": False,
+    "windowDays": 90,
+    "maxDurationHours": 24,
+    "language": "en-AU",
+}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -225,16 +247,7 @@ def powershell_bool(value: bool) -> str:
 
 
 def normalize_custom_properties(device: dict[str, Any], property_names: dict[str, str]) -> dict[str, Any]:
-    normalized = {
-        "bookable": False,
-        "recurring": True,
-        "approvers": "",
-        "fleetManagers": "",
-        "conflicts": False,
-        "windowDays": 90,
-        "maxDurationHours": 24,
-        "language": "en-AU",
-    }
+    normalized = dict(DEFAULT_PROPERTY_VALUES)
 
     for custom_property in device.get("customProperties", []) or []:
         property_id = custom_property.get("property", {}).get("id")
@@ -254,6 +267,131 @@ def normalize_custom_properties(device: dict[str, Any], property_names: dict[str
             normalized[normalized_key] = value or normalized[normalized_key]
 
     return normalized
+
+
+def to_mygeotab_string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def get_mygeotab_api(database: str, username: str, password: str, server: str) -> API:
+    api = API(username=username, password=password, database=database, server=server)
+    api.authenticate()
+    return api
+
+
+def fetch_device_for_update(api: API, device_identifier: str) -> dict[str, Any]:
+    for search in (
+        {"id": device_identifier},
+        {"serialNumber": device_identifier},
+        {"name": device_identifier},
+    ):
+        devices = api.get("Device", search=search) or []
+        if devices:
+            return devices[0]
+    raise RuntimeError(f"Device not found by id/serial/name: {device_identifier}")
+
+
+def build_update_property_lookup(api: API) -> dict[str, dict[str, str]]:
+    properties = api.get("Property") or []
+    lookup: dict[str, dict[str, str]] = {}
+
+    for key, property_name in UPDATE_PROPERTY_NAME_MAP.items():
+        match = next((prop for prop in properties if prop.get("name") == property_name), None)
+        if not match:
+            continue
+
+        lookup[key] = {
+            "id": match["id"],
+            "name": property_name,
+            "propertySetId": ((match.get("propertySet") or {}).get("id") or ""),
+        }
+
+    return lookup
+
+
+def build_device_custom_property_updates(
+    device: dict[str, Any],
+    requested_properties: dict[str, Any],
+    property_lookup: dict[str, dict[str, str]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    existing_custom_properties = device.get("customProperties", []) or []
+    existing_by_property_id: dict[str, dict[str, Any]] = {}
+
+    for item in existing_custom_properties:
+        property_id = ((item.get("property") or {}).get("id") or "")
+        if property_id:
+            existing_by_property_id[property_id] = item
+
+    updates: list[dict[str, Any]] = []
+    missing_keys: list[str] = []
+
+    for key, raw_value in requested_properties.items():
+        property_info = property_lookup.get(key)
+        if not property_info:
+            missing_keys.append(key)
+            continue
+
+        existing_item = existing_by_property_id.get(property_info["id"], {})
+        update_item: dict[str, Any] = {}
+
+        if existing_item.get("id"):
+            update_item["id"] = existing_item["id"]
+        if existing_item.get("version"):
+            update_item["version"] = existing_item["version"]
+
+        property_ref: dict[str, Any] = {"id": property_info["id"]}
+        if property_info.get("propertySetId"):
+            property_ref["propertySet"] = {"id": property_info["propertySetId"]}
+
+        update_item["property"] = property_ref
+        update_item["value"] = to_mygeotab_string(raw_value)
+        updates.append(update_item)
+
+    return updates, missing_keys
+
+
+def update_mygeotab_device_properties(device_identifier: str, properties: dict[str, Any]) -> dict[str, Any]:
+    database, username, password, server = mygeotab_credentials({})
+    missing_credentials = [
+        name
+        for name, value in (
+            ("database", database),
+            ("username", username),
+            ("password", password),
+            ("server", server),
+        )
+        if not value
+    ]
+    if missing_credentials:
+        raise RuntimeError(f"Missing MyGeotab configuration: {', '.join(missing_credentials)}")
+
+    api = get_mygeotab_api(database, username, password, server)
+    device = fetch_device_for_update(api, device_identifier)
+    property_lookup = build_update_property_lookup(api)
+    property_updates, missing_keys = build_device_custom_property_updates(device, properties, property_lookup)
+
+    if not property_updates:
+        raise RuntimeError("No valid FleetBridge property definitions were found for the requested update")
+
+    api.set("Device", {"id": device["id"], "customProperties": property_updates})
+
+    return {
+        "deviceId": device["id"],
+        "deviceName": device.get("name", ""),
+        "deviceIdentifier": device_identifier,
+        "updatedPropertyCount": len(property_updates),
+        "updatedProperties": sorted(
+            property_lookup[key]["name"]
+            for key in properties.keys()
+            if key in property_lookup
+        ),
+        "missingPropertyDefinitions": sorted(missing_keys),
+        "database": database,
+    }
 
 
 def fetch_mygeotab_devices(database: str, username: str, password: str, server: str, max_devices: int) -> list[dict[str, Any]]:
@@ -551,14 +689,32 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
         len(properties),
     )
 
+    try:
+        result = update_mygeotab_device_properties(device_id, properties)
+    except Exception as error:
+        logging.exception("Failed to update MyGeotab device properties for deviceId=%s", device_id)
+        return json_response(
+            {
+                "success": False,
+                "timestamp": utc_now_iso(),
+                "error": str(error),
+                "deviceId": device_id,
+                "propertyKeys": sorted(properties.keys()),
+            },
+            status_code=500,
+        )
+
     return json_response(
         {
             "success": True,
             "timestamp": utc_now_iso(),
-            "mode": "scaffold",
-            "message": "Function App endpoint scaffolded. MyGeotab property update logic is not implemented yet.",
-            "deviceId": device_id,
+            "message": "Device properties updated",
+            "deviceId": result["deviceId"],
+            "deviceName": result["deviceName"],
             "propertyKeys": sorted(properties.keys()),
+            "updatedPropertyCount": result["updatedPropertyCount"],
+            "updatedProperties": result["updatedProperties"],
+            "missingPropertyDefinitions": result["missingPropertyDefinitions"],
         }
     )
 
