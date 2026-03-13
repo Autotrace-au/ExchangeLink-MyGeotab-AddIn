@@ -1,22 +1,9 @@
-name: Deploy Single-Tenant Function App
+name: Deploy GOA Test On Push
 
-"on":
-  workflow_dispatch:
-    inputs:
-      resource_group:
-        description: Azure resource group name
-        required: true
-        type: string
-      parameters_file:
-        description: Checked-in infra parameter file
-        required: true
-        default: infra/parameters.goa-test.json
-        type: string
-      run_smoke_sync:
-        description: Run a one-device sync smoke test after deployment
-        required: true
-        default: false
-        type: boolean
+on:
+  push:
+    branches:
+      - main
 
 permissions:
   id-token: write
@@ -25,6 +12,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      RESOURCE_GROUP: FleetBridgeGOATestRG
+      PARAMETERS_FILE: infra/parameters.goa-test.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,16 +29,12 @@ jobs:
       - name: Deploy Function App Infrastructure and Image
         env:
           FUNCTION_IMAGE_TAG_OVERRIDE: ${{ github.sha }}
-        run: bash ./scripts/deploy-function-app.sh "${{ inputs.resource_group }}" "${{ inputs.parameters_file }}"
+        run: bash ./scripts/deploy-function-app.sh "${RESOURCE_GROUP}" "${PARAMETERS_FILE}"
 
       - name: Decode Exchange Certificate
         env:
           EXCHANGE_PFX_BASE64: ${{ secrets.EXCHANGE_PFX_BASE64 }}
         run: |
-          if [ -z "${EXCHANGE_PFX_BASE64}" ]; then
-            echo "Missing GitHub secret: EXCHANGE_PFX_BASE64"
-            exit 1
-          fi
           printf '%s' "${EXCHANGE_PFX_BASE64}" | base64 --decode > /tmp/exchange-cert.pfx
 
       - name: Seed Key Vault Secrets
@@ -58,7 +44,7 @@ jobs:
           MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
           EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
         run: |
-          KEY_VAULT_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          KEY_VAULT_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -68,7 +54,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 print(data["parameters"]["keyVaultName"]["value"])
 PY
 )"
-          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          EQUIPMENT_DOMAIN="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -78,7 +64,6 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 print(data["parameters"]["equipmentDomain"]["value"])
 PY
 )"
-
           bash ./scripts/seed-key-vault-secrets.sh \
             "${KEY_VAULT_NAME}" \
             "${MYGEOTAB_DATABASE}" \
@@ -90,7 +75,7 @@ PY
 
       - name: Smoke Test Health
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
@@ -103,9 +88,8 @@ PY
           curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
 
       - name: Smoke Test Sync
-        if: ${{ inputs.run_smoke_sync }}
         run: |
-          FUNCTION_APP_NAME="$(python3 - <<'PY' "${{ inputs.parameters_file }}"
+          FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_FILE}"
 import json
 import sys
 
