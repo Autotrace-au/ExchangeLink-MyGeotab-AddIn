@@ -26,6 +26,7 @@ The preferred deployment model is:
 A thin deployment wrapper is available at `scripts/deploy-function-app.sh`.
 A Key Vault seeding helper is available at `scripts/seed-key-vault-secrets.sh`.
 The one-run CI entry point is `.github/workflows/deploy-single-tenant.yml`.
+A bootstrap helper is available at `scripts/bootstrap-github-actions.sh`.
 
 ## Current Baseline
 
@@ -84,6 +85,10 @@ Required GitHub secrets:
 - `MYGEOTAB_PASSWORD`
 - `EXCHANGE_PFX_BASE64`
 - `EXCHANGE_PFX_PASSWORD`
+
+Bootstrap option:
+
+- `scripts/bootstrap-github-actions.sh` can create the Azure OIDC deployment identity, assign Azure roles, generate an Exchange PFX, append it to the Exchange app registration, and write the required GitHub repository secrets.
 
 Workflow inputs:
 

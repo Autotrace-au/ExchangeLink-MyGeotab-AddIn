@@ -54,6 +54,9 @@ param myGeotabPasswordSecretName string = 'MyGeotabPassword'
 @description('Secret name containing the Exchange certificate or secret material.')
 param exchangeCertificateSecretName string = 'ExchangeCertificate'
 
+@description('Optional object ID of the deployment principal that needs Key Vault secret write access.')
+param deploymentPrincipalObjectId string = ''
+
 @description('Allowed CORS origins for the Function App.')
 param allowedCorsOrigins array = [
   'https://*.geotab.com'
@@ -229,6 +232,19 @@ resource keyVaultSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-0
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       '4633458b-17de-408a-b874-0445c86b69e6'
+    )
+  }
+}
+
+resource keyVaultSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deploymentPrincipalObjectId)) {
+  name: guid(keyVault.id, deploymentPrincipalObjectId, 'KeyVaultSecretsOfficer')
+  scope: keyVault
+  properties: {
+    principalId: deploymentPrincipalObjectId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
     )
   }
 }

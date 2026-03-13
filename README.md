@@ -37,6 +37,7 @@ The active runtime target is Azure Function App, and the checked-in deployment p
 
 - Bicep parameter file for environment-specific non-secret config
 - GitHub Actions workflow for deploy/build/seed/health-check
+- bootstrap script for Azure OIDC and GitHub repository secrets
 - GitHub secrets for MyGeotab credentials, Azure auth, and Exchange certificate material
 
 The previous container-app implementation remains under `legacy/` for reference only.
