@@ -8,7 +8,7 @@ Examples:
 - seed Key Vault secrets
 - validate Exchange prerequisites
 
-Historical scripts for the prior container-app and SaaS model now live under `../legacy/scripts/`.
+Historical scripts for the prior container-app and SaaS model have been removed from this repository.
 
 Current script:
 

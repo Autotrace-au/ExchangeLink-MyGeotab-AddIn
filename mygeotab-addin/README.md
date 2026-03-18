@@ -25,4 +25,4 @@ The Add-In is the user-facing layer inside MyGeotab. It is responsible for:
 - The shared Add-In build is tenant-neutral; each customer enters their own Function App URL in the Sync tab
 - The Add-In now attempts to persist settings through MyGeotab AddInData and falls back to browser localStorage
 - The repository is being simplified to a single-tenant deployment model
-- Historical backend documentation now lives outside this folder under `../legacy/`
+- Historical backend documentation has been removed from this repository
