@@ -146,6 +146,6 @@ A healthy deployment should satisfy all of the following:
 
 The deployment pipeline rebuilds the custom Function App image on each deploy. That makes deployments slower than a plain zip-based Functions deployment, but it is required because the runtime must include PowerShell and `ExchangeOnlineManagement`.
 
-## Legacy
+## Scope
 
-Container App and SaaS deployment assets remain under `legacy/` and are not part of the active deployment path.
+This repository now contains only the active single-tenant Function App deployment path.

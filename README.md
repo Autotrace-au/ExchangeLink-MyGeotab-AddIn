@@ -28,7 +28,6 @@ FleetBridge does not create equipment mailboxes. Customer administrators create 
 - `docs/` active architecture and deployment documentation
 - `scripts/` helper scripts for deployment bootstrap and operations
 - `.github/workflows/` GitHub Actions deployment workflows
-- `legacy/` superseded SaaS, container-app, and historical implementation assets
 
 ## Deployment Model
 
@@ -124,4 +123,4 @@ The active system now supports:
 - vehicle-name-to-display-name updates
 - GitHub Actions based Azure deployment
 
-The old SaaS and container-app approach remains in `legacy/` for reference only and is not part of the active deployment path.
+The repository no longer includes the retired SaaS and container-app implementation. The active deployment path is the single-tenant Function App model described above.

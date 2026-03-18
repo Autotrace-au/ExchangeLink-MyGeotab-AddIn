@@ -11,8 +11,8 @@ Current scaffold:
 
 The current deployment model uses:
 
-- Azure Function App on Linux Elastic Premium
+- Azure Function App on a Linux Dedicated App Service plan
 - Azure Container Registry for the custom Function App image
 - a custom Function App container so PowerShell and ExchangeOnlineManagement are part of the runtime
 
-The active intent is infrastructure-as-code for the Azure side. Historical imperative scripts remain under `legacy/`.
+The active intent is infrastructure-as-code for the Azure side. Retired imperative deployment assets are no longer included here.

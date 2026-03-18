@@ -49,4 +49,4 @@ Expected non-secret app settings:
 - `DEFAULT_TIMEZONE`
 - `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
 
-The previous container-based backend has been moved to `../legacy/azure-container-app/`.
+The removed container-app backend is no longer part of this repository.
