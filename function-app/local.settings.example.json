@@ -18,6 +18,8 @@
     "EQUIPMENT_DOMAIN": "example.com",
     "EQUIPMENT_DOMAIN_SECRET_NAME": "EquipmentDomain",
     "DEFAULT_TIMEZONE": "AUS Eastern Standard Time",
-    "MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC": "true"
+    "MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC": "true",
+    "SYNC_MAX_WORKERS": "4",
+    "SYNC_BATCH_SIZE": "20"
   }
 }

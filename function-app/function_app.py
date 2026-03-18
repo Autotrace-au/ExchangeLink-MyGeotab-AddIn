@@ -8,6 +8,7 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,12 @@ def int_setting(name: str, default: int) -> int:
         return default
 
 
+def chunked(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+    if size <= 0:
+        return [items]
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
 def json_response(payload: dict[str, Any], status_code: int = 200) -> func.HttpResponse:
     return func.HttpResponse(
         body=json.dumps(payload),
@@ -100,6 +107,7 @@ def parse_json(req: func.HttpRequest) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
+@lru_cache(maxsize=1)
 def get_secret_client() -> SecretClient | None:
     key_vault_url = os.getenv("KEY_VAULT_URL")
     if not key_vault_url:
@@ -107,6 +115,7 @@ def get_secret_client() -> SecretClient | None:
     return SecretClient(vault_url=key_vault_url, credential=DefaultAzureCredential())
 
 
+@lru_cache(maxsize=32)
 def get_secret_value(secret_name: str | None) -> str:
     if not secret_name:
         return ""
@@ -433,7 +442,7 @@ def exchange_certificate_material() -> tuple[str, str]:
     return cert_value, password
 
 
-def invoke_exchange_sync(device: dict[str, Any]) -> dict[str, Any]:
+def exchange_sync_settings() -> dict[str, Any]:
     pwsh_path = shutil.which("pwsh")
     if not pwsh_path:
         raise RuntimeError("pwsh is not available in the Function App runtime")
@@ -454,60 +463,77 @@ def invoke_exchange_sync(device: dict[str, Any]) -> dict[str, Any]:
     if not cert_b64:
         raise RuntimeError("Exchange certificate secret could not be loaded")
 
-    alias = device["serial"].strip().lower()
-    primary_smtp_address = f"{alias}@{equipment_domain}"
-
     try:
         cert_bytes = base64.b64decode(cert_b64, validate=True)
     except Exception:
         cert_bytes = cert_b64.encode("utf-8")
 
+    return {
+        "pwshPath": pwsh_path,
+        "equipmentDomain": equipment_domain,
+        "exchangeAppId": exchange_app_id,
+        "exchangeOrg": exchange_org,
+        "certBytes": cert_bytes,
+        "certPassword": cert_password,
+    }
+
+
+def build_exchange_sync_payload(device: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    alias = device["serial"].strip().lower()
+    primary_smtp_address = f"{alias}@{settings['equipmentDomain']}"
+
+    return {
+        "deviceId": device["id"],
+        "serial": device["serial"],
+        "vehicleName": device["name"],
+        "primarySmtpAddress": primary_smtp_address,
+        "alias": alias,
+        "displayName": device["name"],
+        "timeZone": device["timeZone"] or os.getenv("DEFAULT_TIMEZONE", "AUS Eastern Standard Time"),
+        "language": str(device.get("language") or "en-AU"),
+        "allowConflicts": powershell_bool(parse_bool(device.get("conflicts"))),
+        "bookingWindowInDays": parse_int(device.get("windowDays"), 90),
+        "maximumDurationInMinutes": parse_int(device.get("maxDurationHours"), 24) * 60,
+        "allowRecurringMeetings": powershell_bool(parse_bool(device.get("recurring"), True)),
+        "makeVisible": powershell_bool(bool_setting("MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC", True)),
+        "fleetManagers": str(device.get("fleetManagers") or ""),
+        "approvers": str(device.get("approvers") or ""),
+        "vin": str(device.get("vin") or ""),
+        "licensePlate": str(device.get("licensePlate") or ""),
+    }
+
+
+def invoke_exchange_sync_batch(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not devices:
+        return []
+
+    settings = exchange_sync_settings()
+    payload = [build_exchange_sync_payload(device, settings) for device in devices]
+
     with tempfile.NamedTemporaryFile(suffix=".pfx", delete=False) as temp_cert:
-        temp_cert.write(cert_bytes)
+        temp_cert.write(settings["certBytes"])
         temp_cert_path = temp_cert.name
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8", delete=False) as temp_input:
+        json.dump(payload, temp_input)
+        temp_input_path = temp_input.name
 
     try:
         command = [
-            pwsh_path,
+            settings["pwshPath"],
             "-NoProfile",
             "-File",
             str(EXCHANGE_SYNC_SCRIPT),
-            "-PrimarySmtpAddress",
-            primary_smtp_address,
-            "-Alias",
-            alias,
-            "-DisplayName",
-            device["name"],
+            "-InputJsonPath",
+            temp_input_path,
             "-Organization",
-            exchange_org,
+            settings["exchangeOrg"],
             "-AppId",
-            exchange_app_id,
+            settings["exchangeAppId"],
             "-CertificatePath",
             temp_cert_path,
             "-CertificatePassword",
-            cert_password,
-            "-TimeZone",
-            device["timeZone"] or os.getenv("DEFAULT_TIMEZONE", "AUS Eastern Standard Time"),
-            "-Language",
-            str(device.get("language") or "en-AU"),
-            "-AllowConflicts",
-            powershell_bool(parse_bool(device.get("conflicts"))),
-            "-BookingWindowInDays",
-            str(parse_int(device.get("windowDays"), 90)),
-            "-MaximumDurationInMinutes",
-            str(parse_int(device.get("maxDurationHours"), 24) * 60),
-            "-AllowRecurringMeetings",
-            powershell_bool(parse_bool(device.get("recurring"), True)),
-            "-MakeVisible",
-            powershell_bool(bool_setting("MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC", True)),
-            "-FleetManagers",
-            str(device.get("fleetManagers") or ""),
-            "-Approvers",
-            str(device.get("approvers") or ""),
-            "-VIN",
-            str(device.get("vin") or ""),
-            "-LicensePlate",
-            str(device.get("licensePlate") or ""),
+            settings["certPassword"],
         ]
 
         completed = subprocess.run(
@@ -522,75 +548,112 @@ def invoke_exchange_sync(device: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError(completed.stderr.strip() or "Exchange sync script returned no output")
 
         try:
-            result = json.loads(stdout.splitlines()[-1])
+            results = json.loads(stdout.splitlines()[-1])
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Exchange sync script returned invalid JSON: {stdout}") from exc
 
-        if completed.returncode != 0 and result.get("success") is not True:
-            raise RuntimeError(result.get("message") or completed.stderr.strip() or "Exchange sync failed")
+        if not isinstance(results, list):
+            raise RuntimeError("Exchange sync script returned an invalid result payload")
 
-        return {
-            "deviceId": device["id"],
-            "serial": device["serial"],
-            "vehicleName": device["name"],
-            **result,
+        result_map = {
+            str(item.get("serial", "")).strip(): item
+            for item in results
+            if isinstance(item, dict)
         }
+        batch_results: list[dict[str, Any]] = []
+
+        for payload_item in payload:
+            serial = payload_item["serial"]
+            result = result_map.get(serial)
+            if result is None:
+                if completed.returncode != 0:
+                    raise RuntimeError(completed.stderr.strip() or "Exchange sync failed")
+                result = {
+                    "success": False,
+                    "message": "Exchange sync script returned no result for device",
+                    "found": False,
+                }
+
+            batch_results.append(
+                {
+                    "deviceId": payload_item["deviceId"],
+                    "serial": serial,
+                    "vehicleName": payload_item["vehicleName"],
+                    **result,
+                }
+            )
+
+        return batch_results
     finally:
         try:
             os.remove(temp_cert_path)
+        except FileNotFoundError:
+            pass
+        try:
+            os.remove(temp_input_path)
         except FileNotFoundError:
             pass
 
 
 def process_devices(devices: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
     max_workers = max(1, int_setting("SYNC_MAX_WORKERS", 4))
+    batch_size = max(1, int_setting("SYNC_BATCH_SIZE", 20))
+    device_batches = chunked(devices, batch_size)
 
-    if max_workers == 1 or len(devices) <= 1:
+    if max_workers == 1 or len(device_batches) <= 1:
         results = []
         successful = 0
         failed = 0
-        for device in devices:
+        for device_batch in device_batches:
             try:
-                result = invoke_exchange_sync(device)
-                successful += 1 if result.get("success") else 0
-                failed += 0 if result.get("success") else 1
-                results.append(result)
+                batch_results = invoke_exchange_sync_batch(device_batch)
+                for result in batch_results:
+                    successful += 1 if result.get("success") else 0
+                    failed += 0 if result.get("success") else 1
+                    results.append(result)
             except Exception as exc:
-                failed += 1
-                results.append(
-                    {
-                        "success": False,
-                        "serial": device["serial"],
-                        "vehicleName": device["name"],
-                        "message": str(exc),
-                    }
-                )
+                for device in device_batch:
+                    failed += 1
+                    results.append(
+                        {
+                            "success": False,
+                            "serial": device["serial"],
+                            "vehicleName": device["name"],
+                            "message": str(exc),
+                        }
+                    )
         return results, successful, failed
 
     results: list[dict[str, Any] | None] = [None] * len(devices)
     successful = 0
     failed = 0
+    serial_to_index = {device["serial"]: index for index, device in enumerate(devices)}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
-            executor.submit(invoke_exchange_sync, device): (index, device)
-            for index, device in enumerate(devices)
+            executor.submit(invoke_exchange_sync_batch, device_batch): device_batch
+            for device_batch in device_batches
         }
         for future in as_completed(future_map):
-            index, device = future_map[future]
+            device_batch = future_map[future]
             try:
-                result = future.result()
-                successful += 1 if result.get("success") else 0
-                failed += 0 if result.get("success") else 1
-                results[index] = result
+                batch_results = future.result()
+                for result in batch_results:
+                    successful += 1 if result.get("success") else 0
+                    failed += 0 if result.get("success") else 1
+                    index = serial_to_index.get(result["serial"])
+                    if index is not None:
+                        results[index] = result
             except Exception as exc:
-                failed += 1
-                results[index] = {
-                    "success": False,
-                    "serial": device["serial"],
-                    "vehicleName": device["name"],
-                    "message": str(exc),
-                }
+                for device in device_batch:
+                    failed += 1
+                    index = serial_to_index[device["serial"]]
+                    results[index] = {
+                        "success": False,
+                        "serial": device["serial"],
+                        "vehicleName": device["name"],
+                        "message": str(exc),
+                    }
 
     return [item for item in results if item is not None], successful, failed
 

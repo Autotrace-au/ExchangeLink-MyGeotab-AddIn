@@ -1,7 +1,7 @@
 param(
-  [Parameter(Mandatory = $true)][string]$PrimarySmtpAddress,
-  [Parameter(Mandatory = $true)][string]$Alias,
-  [Parameter(Mandatory = $true)][string]$DisplayName,
+  [Parameter(Mandatory = $false)][string]$PrimarySmtpAddress,
+  [Parameter(Mandatory = $false)][string]$Alias,
+  [Parameter(Mandatory = $false)][string]$DisplayName,
   [Parameter(Mandatory = $true)][string]$Organization,
   [Parameter(Mandatory = $true)][string]$AppId,
   [Parameter(Mandatory = $true)][string]$CertificatePath,
@@ -16,7 +16,8 @@ param(
   [Parameter(Mandatory = $false)][string]$FleetManagers = '',
   [Parameter(Mandatory = $false)][string]$Approvers = '',
   [Parameter(Mandatory = $false)][string]$VIN = '',
-  [Parameter(Mandatory = $false)][string]$LicensePlate = ''
+  [Parameter(Mandatory = $false)][string]$LicensePlate = '',
+  [Parameter(Mandatory = $false)][string]$InputJsonPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,12 +64,162 @@ function To-Bool {
   }
 }
 
+function To-Hashtable {
+  param(
+    [Parameter(Mandatory = $true)]$InputObject
+  )
+
+  if ($InputObject -is [hashtable]) {
+    return $InputObject
+  }
+
+  $result = @{}
+  foreach ($property in $InputObject.PSObject.Properties) {
+    $result[$property.Name] = $property.Value
+  }
+  return $result
+}
+
+function Invoke-MailboxSync {
+  param(
+    [Parameter(Mandatory = $true)][hashtable]$Item
+  )
+
+  $primarySmtpAddress = [string]($Item.primarySmtpAddress ?? '')
+  $alias = [string]($Item.alias ?? '')
+  $displayName = [string]($Item.displayName ?? '')
+  $timeZone = [string]($Item.timeZone ?? $TimeZone)
+  $language = [string]($Item.language ?? $Language)
+  $allowConflictsValue = To-Bool -Value ([string]($Item.allowConflicts ?? $AllowConflicts)) -Default $false
+  $bookingWindowInDaysValue = [int]($Item.bookingWindowInDays ?? $BookingWindowInDays)
+  $maximumDurationInMinutesValue = [int]($Item.maximumDurationInMinutes ?? $MaximumDurationInMinutes)
+  $allowRecurringMeetingsValue = To-Bool -Value ([string]($Item.allowRecurringMeetings ?? $AllowRecurringMeetings)) -Default $true
+  $makeVisibleValue = To-Bool -Value ([string]($Item.makeVisible ?? $MakeVisible)) -Default $true
+  $fleetManagersValue = [string]($Item.fleetManagers ?? $FleetManagers)
+  $approversValue = [string]($Item.approvers ?? $Approvers)
+  $vinValue = [string]($Item.vin ?? $VIN)
+  $licensePlateValue = [string]($Item.licensePlate ?? $LicensePlate)
+  $deviceId = [string]($Item.deviceId ?? '')
+  $serial = [string]($Item.serial ?? '')
+  $vehicleName = [string]($Item.vehicleName ?? $displayName)
+
+  try {
+    $mailbox = Get-EXOMailbox -Identity $primarySmtpAddress -ErrorAction SilentlyContinue
+    if (-not $mailbox) {
+      $mailbox = Get-EXOMailbox -Identity $alias -ErrorAction SilentlyContinue
+    }
+
+    if (-not $mailbox) {
+      return @{
+        success = $false
+        message = 'Mailbox not found'
+        primarySmtpAddress = $primarySmtpAddress
+        alias = $alias
+        found = $false
+        deviceId = $deviceId
+        serial = $serial
+        vehicleName = $vehicleName
+      }
+    }
+
+    $wasHidden = $mailbox.HiddenFromAddressListsEnabled
+    $mailboxIdentity = $mailbox.UserPrincipalName
+    if ([string]::IsNullOrWhiteSpace($mailboxIdentity)) {
+      $mailboxIdentity = $mailbox.PrimarySmtpAddress
+    }
+
+    $setMailboxParams = @{
+      Identity = $mailboxIdentity
+    }
+    if ($mailbox.DisplayName -ne $displayName) {
+      $setMailboxParams.DisplayName = $displayName
+    }
+    if ($mailbox.Alias -ne $alias) {
+      $setMailboxParams.Alias = $alias
+    }
+    if ([string]$mailbox.PrimarySmtpAddress -ne $primarySmtpAddress) {
+      $setMailboxParams.PrimarySmtpAddress = $primarySmtpAddress
+    }
+    if ($makeVisibleValue -and $wasHidden) {
+      $setMailboxParams.HiddenFromAddressListsEnabled = $false
+    }
+    if (-not [string]::IsNullOrWhiteSpace($vinValue) -or -not [string]::IsNullOrWhiteSpace($licensePlateValue)) {
+      $setMailboxParams.CustomAttribute1 = $vinValue
+      $setMailboxParams.CustomAttribute2 = $licensePlateValue
+    }
+    if ($setMailboxParams.Count -gt 1) {
+      Set-Mailbox @setMailboxParams
+    }
+
+    Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
+
+    $calParams = @{
+      Identity                 = $mailboxIdentity
+      AutomateProcessing       = 'AutoAccept'
+      AllowConflicts           = $allowConflictsValue
+      BookingWindowInDays      = $bookingWindowInDaysValue
+      MaximumDurationInMinutes = $maximumDurationInMinutesValue
+      AllowRecurringMeetings   = $allowRecurringMeetingsValue
+      AllBookInPolicy          = $true
+      AllRequestInPolicy       = $false
+    }
+    Set-CalendarProcessing @calParams
+
+    $approverList = @()
+    if (-not [string]::IsNullOrWhiteSpace($approversValue)) {
+      $approverList = $approversValue.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+    if ($approverList.Count -gt 0) {
+      Set-CalendarProcessing -Identity $mailboxIdentity -BookInPolicy $approverList
+    }
+
+    $managerList = @()
+    if (-not [string]::IsNullOrWhiteSpace($fleetManagersValue)) {
+      $managerList = $fleetManagersValue.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+
+    foreach ($manager in $managerList) {
+      try {
+        Add-MailboxFolderPermission `
+          -Identity "$($mailbox.PrimarySmtpAddress):\Calendar" `
+          -User $manager `
+          -AccessRights Editor `
+          -ErrorAction Stop | Out-Null
+      } catch {
+        if ($_.Exception.Message -notmatch 'already') {
+          throw
+        }
+      }
+    }
+
+    return @{
+      success = $true
+      message = 'Mailbox updated'
+      found = $true
+      primarySmtpAddress = $primarySmtpAddress
+      displayName = $displayName
+      wasHidden = [bool]$wasHidden
+      madeVisible = [bool]($makeVisibleValue -and $wasHidden)
+      deviceId = $deviceId
+      serial = $serial
+      vehicleName = $vehicleName
+    }
+  } catch {
+    return @{
+      success = $false
+      message = $_.Exception.Message
+      found = $false
+      primarySmtpAddress = $primarySmtpAddress
+      alias = $alias
+      deviceId = $deviceId
+      serial = $serial
+      vehicleName = $vehicleName
+    }
+  }
+}
+
 try {
   Import-Module ExchangeOnlineManagement -ErrorAction Stop
-
-  $allowConflictsValue = To-Bool -Value $AllowConflicts -Default $false
-  $allowRecurringMeetingsValue = To-Bool -Value $AllowRecurringMeetings -Default $true
-  $makeVisibleValue = To-Bool -Value $MakeVisible -Default $true
 
   if ([string]::IsNullOrWhiteSpace($CertificatePassword)) {
     Connect-ExchangeOnline `
@@ -86,94 +237,34 @@ try {
       -ShowBanner:$false | Out-Null
   }
 
-  $mailbox = Get-EXOMailbox -Identity $PrimarySmtpAddress -ErrorAction SilentlyContinue
-  if (-not $mailbox) {
-    $mailbox = Get-EXOMailbox -Identity $Alias -ErrorAction SilentlyContinue
-  }
-
-  if (-not $mailbox) {
-    Write-Output (To-JsonResult -Success $false -Message 'Mailbox not found' -Extra @{
-      primarySmtpAddress = $PrimarySmtpAddress
-      alias = $Alias
-      found = $false
-    })
+  if (-not [string]::IsNullOrWhiteSpace($InputJsonPath)) {
+    $items = Get-Content -Raw -Path $InputJsonPath | ConvertFrom-Json -Depth 10
+    $results = @()
+    foreach ($item in $items) {
+      $results += Invoke-MailboxSync -Item (To-Hashtable -InputObject $item)
+    }
+    Write-Output (ConvertTo-Json -InputObject @($results) -Depth 10 -Compress)
     exit 0
   }
 
-  $wasHidden = $mailbox.HiddenFromAddressListsEnabled
-  $mailboxIdentity = $mailbox.UserPrincipalName
-  if ([string]::IsNullOrWhiteSpace($mailboxIdentity)) {
-    $mailboxIdentity = $mailbox.PrimarySmtpAddress
-  }
-
-  Set-Mailbox -Identity $mailboxIdentity -DisplayName $DisplayName
-
-  if ($mailbox.Alias -ne $Alias) {
-    Set-Mailbox -Identity $mailboxIdentity -Alias $Alias
-  }
-
-  if ($mailbox.PrimarySmtpAddress -ne $PrimarySmtpAddress) {
-    Set-Mailbox -Identity $mailboxIdentity -PrimarySmtpAddress $PrimarySmtpAddress
-  }
-
-  if ($makeVisibleValue -and $wasHidden) {
-    Set-Mailbox -Identity $mailboxIdentity -HiddenFromAddressListsEnabled:$false
-  }
-
-  Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $TimeZone -Language $Language
-
-  $calParams = @{
-    Identity                 = $mailboxIdentity
-    AutomateProcessing       = 'AutoAccept'
-    AllowConflicts           = $allowConflictsValue
-    BookingWindowInDays      = $BookingWindowInDays
-    MaximumDurationInMinutes = $MaximumDurationInMinutes
-    AllowRecurringMeetings   = $allowRecurringMeetingsValue
-    AllBookInPolicy          = $true
-    AllRequestInPolicy       = $false
-  }
-  Set-CalendarProcessing @calParams
-
-  if (-not [string]::IsNullOrWhiteSpace($VIN) -or -not [string]::IsNullOrWhiteSpace($LicensePlate)) {
-    Set-Mailbox -Identity $mailboxIdentity `
-      -CustomAttribute1 $VIN `
-      -CustomAttribute2 $LicensePlate
-  }
-
-  $approverList = @()
-  if (-not [string]::IsNullOrWhiteSpace($Approvers)) {
-    $approverList = $Approvers.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-  }
-  if ($approverList.Count -gt 0) {
-    Set-CalendarProcessing -Identity $mailboxIdentity -BookInPolicy $approverList
-  }
-
-  $managerList = @()
-  if (-not [string]::IsNullOrWhiteSpace($FleetManagers)) {
-    $managerList = $FleetManagers.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-  }
-
-  foreach ($manager in $managerList) {
-    try {
-      Add-MailboxFolderPermission `
-        -Identity "$($mailbox.PrimarySmtpAddress):\Calendar" `
-        -User $manager `
-        -AccessRights Editor `
-        -ErrorAction Stop | Out-Null
-    } catch {
-      if ($_.Exception.Message -notmatch 'already') {
-        throw
-      }
-    }
-  }
-
-  Write-Output (To-JsonResult -Success $true -Message 'Mailbox updated' -Extra @{
-    found = $true
+  $singleItem = @{
     primarySmtpAddress = $PrimarySmtpAddress
+    alias = $Alias
     displayName = $DisplayName
-    wasHidden = [bool]$wasHidden
-    madeVisible = [bool]($makeVisibleValue -and $wasHidden)
-  })
+    timeZone = $TimeZone
+    language = $Language
+    allowConflicts = $AllowConflicts
+    bookingWindowInDays = $BookingWindowInDays
+    maximumDurationInMinutes = $MaximumDurationInMinutes
+    allowRecurringMeetings = $AllowRecurringMeetings
+    makeVisible = $MakeVisible
+    fleetManagers = $FleetManagers
+    approvers = $Approvers
+    vin = $VIN
+    licensePlate = $LicensePlate
+  }
+  $result = Invoke-MailboxSync -Item $singleItem
+  Write-Output ($result | ConvertTo-Json -Depth 10 -Compress)
 }
 catch {
   Write-Output (To-JsonResult -Success $false -Message $_.Exception.Message -Extra @{

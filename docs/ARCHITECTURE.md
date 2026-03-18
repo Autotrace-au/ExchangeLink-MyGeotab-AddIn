@@ -89,6 +89,8 @@ Sync is asynchronous.
 
 This avoids browser timeouts for larger environments.
 
+Within a job, devices are processed in Exchange batches so one PowerShell process and one Exchange Online connection can update multiple mailboxes before the worker opens another session. Concurrency and batch size are controlled by `SYNC_MAX_WORKERS` and `SYNC_BATCH_SIZE`.
+
 ## MyGeotab Property Model
 
 FleetBridge stores booking-related configuration as MyGeotab device custom properties. These include:
