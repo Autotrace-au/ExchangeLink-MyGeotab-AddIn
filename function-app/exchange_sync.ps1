@@ -8,6 +8,7 @@ param(
   [Parameter(Mandatory = $false)][string]$CertificatePassword = '',
   [Parameter(Mandatory = $false)][string]$TimeZone = 'AUS Eastern Standard Time',
   [Parameter(Mandatory = $false)][string]$Language = 'en-AU',
+  [Parameter(Mandatory = $false)][string]$Bookable = '0',
   [Parameter(Mandatory = $false)][string]$AllowConflicts = '0',
   [Parameter(Mandatory = $false)][int]$BookingWindowInDays = 90,
   [Parameter(Mandatory = $false)][int]$MaximumDurationInMinutes = 1440,
@@ -80,6 +81,22 @@ function To-Hashtable {
   return $result
 }
 
+function Split-IdentifierList {
+  param(
+    [string]$Value
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return @()
+  }
+
+  return @(
+    $Value -split '[,;\r\n]+' |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ }
+  )
+}
+
 function Invoke-MailboxSync {
   param(
     [Parameter(Mandatory = $true)][hashtable]$Item
@@ -90,6 +107,7 @@ function Invoke-MailboxSync {
   $displayName = [string]($Item.displayName ?? '')
   $timeZone = [string]($Item.timeZone ?? $TimeZone)
   $language = [string]($Item.language ?? $Language)
+  $bookableValue = To-Bool -Value ([string]($Item.bookable ?? $Bookable)) -Default $false
   $allowConflictsValue = To-Bool -Value ([string]($Item.allowConflicts ?? $AllowConflicts)) -Default $false
   $bookingWindowInDaysValue = [int]($Item.bookingWindowInDays ?? $BookingWindowInDays)
   $maximumDurationInMinutesValue = [int]($Item.maximumDurationInMinutes ?? $MaximumDurationInMinutes)
@@ -153,38 +171,70 @@ function Invoke-MailboxSync {
 
     Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
 
-    $calParams = @{
-      Identity                 = $mailboxIdentity
-      AutomateProcessing       = 'AutoAccept'
-      AllowConflicts           = $allowConflictsValue
-      BookingWindowInDays      = $bookingWindowInDaysValue
-      MaximumDurationInMinutes = $maximumDurationInMinutesValue
-      AllowRecurringMeetings   = $allowRecurringMeetingsValue
-      AllBookInPolicy          = $true
-      AllRequestInPolicy       = $false
-    }
-    Set-CalendarProcessing @calParams
+    $approverList = Split-IdentifierList -Value $approversValue
 
-    $approverList = @()
-    if (-not [string]::IsNullOrWhiteSpace($approversValue)) {
-      $approverList = $approversValue.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    }
-    if ($approverList.Count -gt 0) {
-      Set-CalendarProcessing -Identity $mailboxIdentity -BookInPolicy $approverList
+    if ($bookableValue) {
+      $calParams = @{
+        Identity                 = $mailboxIdentity
+        AutomateProcessing       = 'AutoAccept'
+        AllowConflicts           = $allowConflictsValue
+        BookingWindowInDays      = $bookingWindowInDaysValue
+        MaximumDurationInMinutes = $maximumDurationInMinutesValue
+        AllowRecurringMeetings   = $allowRecurringMeetingsValue
+        AllBookInPolicy          = $true
+        AllRequestInPolicy       = $false
+        BookInPolicy             = $approverList
+      }
+      Set-CalendarProcessing @calParams
+    } else {
+      Set-CalendarProcessing `
+        -Identity $mailboxIdentity `
+        -AutomateProcessing 'AutoAccept' `
+        -AllBookInPolicy:$false `
+        -AllRequestInPolicy:$false `
+        -AllRequestOutOfPolicy:$false `
+        -BookInPolicy @() `
+        -RequestInPolicy @() `
+        -RequestOutOfPolicy @() `
+        -ResourceDelegates @() `
+        -ForwardRequestsToDelegates:$false
     }
 
-    $managerList = @()
-    if (-not [string]::IsNullOrWhiteSpace($fleetManagersValue)) {
-      $managerList = $fleetManagersValue.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    $managerList = Split-IdentifierList -Value $fleetManagersValue
+    $calendarIdentity = "$($mailbox.PrimarySmtpAddress):\Calendar"
+    $existingManagerPermissions = @(
+      Get-MailboxFolderPermission -Identity $calendarIdentity -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.User -and
+        $_.User.UserType -eq 'Internal' -and
+        $_.User.DisplayName -notin @('Default', 'Anonymous')
+      }
+    )
+    $existingManagerLookup = @{}
+    foreach ($permission in $existingManagerPermissions) {
+      $existingManagerLookup[$permission.User.DisplayName.ToLowerInvariant()] = $permission
+    }
+
+    $desiredManagerLookup = @{}
+    foreach ($manager in $managerList) {
+      $desiredManagerLookup[$manager.ToLowerInvariant()] = $manager
     }
 
     foreach ($manager in $managerList) {
       try {
-        Add-MailboxFolderPermission `
-          -Identity "$($mailbox.PrimarySmtpAddress):\Calendar" `
-          -User $manager `
-          -AccessRights Editor `
-          -ErrorAction Stop | Out-Null
+        if ($existingManagerLookup.ContainsKey($manager.ToLowerInvariant())) {
+          Set-MailboxFolderPermission `
+            -Identity $calendarIdentity `
+            -User $manager `
+            -AccessRights Editor `
+            -ErrorAction Stop | Out-Null
+        } else {
+          Add-MailboxFolderPermission `
+            -Identity $calendarIdentity `
+            -User $manager `
+            -AccessRights Editor `
+            -ErrorAction Stop | Out-Null
+        }
       } catch {
         if ($_.Exception.Message -notmatch 'already') {
           throw
@@ -192,10 +242,30 @@ function Invoke-MailboxSync {
       }
     }
 
+    foreach ($permission in $existingManagerPermissions) {
+      $existingManager = $permission.User.DisplayName
+      if ([string]::IsNullOrWhiteSpace($existingManager)) {
+        continue
+      }
+      if ($desiredManagerLookup.ContainsKey($existingManager.ToLowerInvariant())) {
+        continue
+      }
+      Remove-MailboxFolderPermission `
+        -Identity $calendarIdentity `
+        -User $existingManager `
+        -Confirm:$false `
+        -ErrorAction SilentlyContinue | Out-Null
+    }
+
     return @{
       success = $true
       message = 'Mailbox updated'
       found = $true
+      bookable = [bool]$bookableValue
+      allowRecurringMeetings = [bool]$allowRecurringMeetingsValue
+      allowConflicts = [bool]$allowConflictsValue
+      approverCount = $approverList.Count
+      fleetManagerCount = $managerList.Count
       primarySmtpAddress = $primarySmtpAddress
       displayName = $displayName
       wasHidden = [bool]$wasHidden
@@ -254,6 +324,7 @@ try {
     timeZone = $TimeZone
     language = $Language
     allowConflicts = $AllowConflicts
+    bookable = $Bookable
     bookingWindowInDays = $BookingWindowInDays
     maximumDurationInMinutes = $MaximumDurationInMinutes
     allowRecurringMeetings = $AllowRecurringMeetings
