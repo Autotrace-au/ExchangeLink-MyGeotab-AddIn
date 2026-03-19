@@ -69,8 +69,19 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"maxDevices":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')"
           echo "Queued sync job: ${JOB_ID}"
+          POLL_FAILURES=0
           for attempt in $(seq 1 60); do
-            STATUS_JSON="$(curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-status?jobId=${JOB_ID}")"
+            if ! STATUS_JSON="$(curl -fsS --max-time 20 "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-status?jobId=${JOB_ID}")"; then
+              POLL_FAILURES=$((POLL_FAILURES + 1))
+              echo "Sync status poll failed (${attempt}/60), consecutive failures: ${POLL_FAILURES}"
+              if [ "${POLL_FAILURES}" -ge 6 ]; then
+                echo "Sync status polling failed too many times in a row"
+                exit 1
+              fi
+              sleep 10
+              continue
+            fi
+            POLL_FAILURES=0
             STATUS="$(printf '%s' "${STATUS_JSON}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
             echo "Sync status (${attempt}/60): ${STATUS}"
             if [ "${STATUS}" = "completed" ]; then
