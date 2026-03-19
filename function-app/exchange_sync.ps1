@@ -309,7 +309,7 @@ function Invoke-MailboxSync {
     } else {
       Set-CalendarProcessing `
         -Identity $mailboxIdentity `
-        -AutomateProcessing 'None' `
+        -AutomateProcessing 'AutoAccept' `
         -AllBookInPolicy:$false `
         -AllRequestInPolicy:$false `
         -AllRequestOutOfPolicy:$false `
