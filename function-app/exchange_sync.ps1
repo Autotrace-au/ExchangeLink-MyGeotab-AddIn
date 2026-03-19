@@ -274,8 +274,12 @@ function Invoke-MailboxSync {
     if ([string]$mailbox.PrimarySmtpAddress -ne $primarySmtpAddress) {
       $setMailboxParams.PrimarySmtpAddress = $primarySmtpAddress
     }
-    if ($makeVisibleValue -and $wasHidden) {
-      $setMailboxParams.HiddenFromAddressListsEnabled = $false
+    if ($bookableValue) {
+      if ($makeVisibleValue -and $wasHidden) {
+        $setMailboxParams.HiddenFromAddressListsEnabled = $false
+      }
+    } elseif (-not $wasHidden) {
+      $setMailboxParams.HiddenFromAddressListsEnabled = $true
     }
     if (-not [string]::IsNullOrWhiteSpace($vinValue) -or -not [string]::IsNullOrWhiteSpace($licensePlateValue)) {
       $setMailboxParams.CustomAttribute1 = $vinValue
@@ -305,7 +309,7 @@ function Invoke-MailboxSync {
     } else {
       Set-CalendarProcessing `
         -Identity $mailboxIdentity `
-        -AutomateProcessing 'AutoAccept' `
+        -AutomateProcessing 'None' `
         -AllBookInPolicy:$false `
         -AllRequestInPolicy:$false `
         -AllRequestOutOfPolicy:$false `
