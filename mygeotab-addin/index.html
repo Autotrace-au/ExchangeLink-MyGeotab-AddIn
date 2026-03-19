@@ -776,6 +776,17 @@
                 { name: 'Mailbox Language', internalName: 'MailboxLanguage', description: 'Language code for booking confirmation emails. Default: en-AU (Australian English). Other examples: en-US, en-GB.', dataType: 'String' }
             ];
 
+            const PROPERTY_NAME_TO_KEY = {
+                'Enable Equipment Booking': 'bookable',
+                'Allow Recurring Bookings': 'recurring',
+                'Booking Approvers': 'approvers',
+                'Fleet Managers': 'fleetManagers',
+                'Allow Double Booking': 'conflicts',
+                'Booking Window (Days)': 'windowDays',
+                'Maximum Booking Duration (Hours)': 'maxDurationHours',
+                'Mailbox Language': 'language'
+            };
+
             let existingProperties = [];
             let missingProperties = [];
             let cachedSettingsRecordId = null;
@@ -1352,13 +1363,22 @@
                     loadBtn.innerHTML = '<span class="loading-spinner"></span> Loading...';
                     updateAssetStatus('Loading assets from MyGeotab...', 'info');
 
-                    // Get all devices with their custom properties
-                    const devices = await new Promise((resolve, reject) => {
-                        api.call('Get', {
-                            typeName: 'Device',
-                            resultsLimit: 5000
-                        }, resolve, reject);
-                    });
+                    const [devices, properties] = await Promise.all([
+                        new Promise((resolve, reject) => {
+                            api.call('Get', {
+                                typeName: 'Device',
+                                resultsLimit: 5000
+                            }, resolve, reject);
+                        }),
+                        new Promise((resolve, reject) => {
+                            api.call('Get', {
+                                typeName: 'Property',
+                                search: {}
+                            }, resolve, reject);
+                        })
+                    ]);
+
+                    const propertyNamesById = buildPropertyNamesById(properties || []);
 
                     allAssets = devices.map(device => {
                         return {
@@ -1366,7 +1386,7 @@
                             name: device.name,
                             serialNumber: device.serialNumber,
                             device: device,  // Store full device object
-                            properties: getDeviceProperties(device)
+                            properties: getDeviceProperties(device, propertyNamesById)
                         };
                     });
 
@@ -1384,7 +1404,46 @@
                 }
             }
 
-            function getDeviceProperties(device) {
+            function buildPropertyNamesById(properties) {
+                const propertyNamesById = {};
+                properties.forEach(property => {
+                    if (property && property.id && property.name) {
+                        propertyNamesById[property.id] = property.name;
+                    }
+                });
+                return propertyNamesById;
+            }
+
+            function parseBooleanProperty(value, defaultValue = false) {
+                if (value === undefined || value === null || value === '') return defaultValue;
+                if (typeof value === 'boolean') return value;
+                if (typeof value === 'number') return value !== 0;
+                return ['true', '1', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+            }
+
+            function parseIntegerProperty(value, defaultValue) {
+                const parsed = parseInt(value, 10);
+                return Number.isFinite(parsed) ? parsed : defaultValue;
+            }
+
+            function applyCustomPropertyValue(props, propertyName, value) {
+                const propKey = PROPERTY_NAME_TO_KEY[propertyName];
+                if (!propKey) return;
+
+                if (propKey === 'bookable' || propKey === 'recurring' || propKey === 'conflicts') {
+                    props[propKey] = parseBooleanProperty(value, props[propKey]);
+                    return;
+                }
+
+                if (propKey === 'windowDays' || propKey === 'maxDurationHours') {
+                    props[propKey] = parseIntegerProperty(value, props[propKey]);
+                    return;
+                }
+
+                props[propKey] = value || props[propKey];
+            }
+
+            function getDeviceProperties(device, propertyNamesById = {}) {
                 const props = {
                     bookable: false,
                     recurring: false,
@@ -1396,13 +1455,18 @@
                     language: 'en-AU'
                 };
 
-                // Custom properties are stored directly on the device object
-                // Look for properties by their internal names
-                if (device.bookable !== undefined) props.bookable = device.bookable === true || device.bookable === 'true';
-                if (device.Bookable !== undefined) props.bookable = device.Bookable === true || device.Bookable === 'true';
+                (device.customProperties || []).forEach(customProperty => {
+                    const propertyId = customProperty && customProperty.property ? customProperty.property.id : null;
+                    const propertyName = propertyNamesById[propertyId];
+                    applyCustomPropertyValue(props, propertyName, customProperty ? customProperty.value : undefined);
+                });
 
-                if (device.allowRecurringBooking !== undefined) props.recurring = device.allowRecurringBooking === true || device.allowRecurringBooking === 'true';
-                if (device.AllowRecurringBooking !== undefined) props.recurring = device.AllowRecurringBooking === true || device.AllowRecurringBooking === 'true';
+                // Fall back to direct properties for any legacy payloads that flatten values onto the device.
+                if (device.bookable !== undefined) props.bookable = parseBooleanProperty(device.bookable, props.bookable);
+                if (device.Bookable !== undefined) props.bookable = parseBooleanProperty(device.Bookable, props.bookable);
+
+                if (device.allowRecurringBooking !== undefined) props.recurring = parseBooleanProperty(device.allowRecurringBooking, props.recurring);
+                if (device.AllowRecurringBooking !== undefined) props.recurring = parseBooleanProperty(device.AllowRecurringBooking, props.recurring);
 
                 if (device.approvers !== undefined) props.approvers = device.approvers || '';
                 if (device.Approvers !== undefined) props.approvers = device.Approvers || '';
@@ -1410,17 +1474,17 @@
                 if (device.fleetManagers !== undefined) props.fleetManagers = device.fleetManagers || '';
                 if (device.FleetManagers !== undefined) props.fleetManagers = device.FleetManagers || '';
 
-                if (device.allowConflicts !== undefined) props.conflicts = device.allowConflicts === true || device.allowConflicts === 'true';
-                if (device.AllowConflicts !== undefined) props.conflicts = device.AllowConflicts === true || device.AllowConflicts === 'true';
+                if (device.allowConflicts !== undefined) props.conflicts = parseBooleanProperty(device.allowConflicts, props.conflicts);
+                if (device.AllowConflicts !== undefined) props.conflicts = parseBooleanProperty(device.AllowConflicts, props.conflicts);
 
-                if (device.bookingWindowInDays !== undefined) props.windowDays = parseInt(device.bookingWindowInDays) || 90;
-                if (device.BookingWindowInDays !== undefined) props.windowDays = parseInt(device.BookingWindowInDays) || 90;
+                if (device.bookingWindowInDays !== undefined) props.windowDays = parseIntegerProperty(device.bookingWindowInDays, props.windowDays);
+                if (device.BookingWindowInDays !== undefined) props.windowDays = parseIntegerProperty(device.BookingWindowInDays, props.windowDays);
 
-                if (device.maximumDurationInHours !== undefined) props.maxDurationHours = parseInt(device.maximumDurationInHours) || 24;
-                if (device.MaximumDurationInHours !== undefined) props.maxDurationHours = parseInt(device.MaximumDurationInHours) || 24;
+                if (device.maximumDurationInHours !== undefined) props.maxDurationHours = parseIntegerProperty(device.maximumDurationInHours, props.maxDurationHours);
+                if (device.MaximumDurationInHours !== undefined) props.maxDurationHours = parseIntegerProperty(device.MaximumDurationInHours, props.maxDurationHours);
 
-                if (device.mailboxLanguage !== undefined) props.language = device.mailboxLanguage || 'en-AU';
-                if (device.MailboxLanguage !== undefined) props.language = device.MailboxLanguage || 'en-AU';
+                if (device.mailboxLanguage !== undefined) props.language = device.mailboxLanguage || props.language;
+                if (device.MailboxLanguage !== undefined) props.language = device.MailboxLanguage || props.language;
 
                 return props;
             }
