@@ -93,8 +93,124 @@ function Split-IdentifierList {
   return @(
     $Value -split '[,;\r\n]+' |
     ForEach-Object { $_.Trim() } |
-    Where-Object { $_ }
+    Where-Object { $_ } |
+    Select-Object -Unique
   )
+}
+
+function Get-IdentityKeys {
+  param(
+    $Value
+  )
+
+  $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+  function Add-IdentityKey {
+    param(
+      [string]$Candidate
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Candidate)) {
+      return
+    }
+
+    $trimmed = $Candidate.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+      return
+    }
+
+    [void]$keys.Add($trimmed.ToLowerInvariant())
+
+    if ($trimmed.Contains('\')) {
+      $suffix = $trimmed.Split('\')[-1]
+      if (-not [string]::IsNullOrWhiteSpace($suffix)) {
+        [void]$keys.Add($suffix.Trim().ToLowerInvariant())
+      }
+    }
+  }
+
+  if ($null -eq $Value) {
+    return @()
+  }
+
+  if ($Value -is [string]) {
+    Add-IdentityKey -Candidate $Value
+    return @($keys)
+  }
+
+  foreach ($property in $Value.PSObject.Properties) {
+    $propertyValue = $property.Value
+    if ($null -eq $propertyValue) {
+      continue
+    }
+    if ($propertyValue -is [string]) {
+      Add-IdentityKey -Candidate $propertyValue
+      continue
+    }
+    if ($propertyValue -is [System.Collections.IEnumerable] -and -not ($propertyValue -is [string])) {
+      foreach ($item in $propertyValue) {
+        if ($item -is [string]) {
+          Add-IdentityKey -Candidate $item
+        }
+      }
+    }
+  }
+
+  return @($keys)
+}
+
+function Resolve-RecipientIdentity {
+  param(
+    [string]$Identity
+  )
+
+  $resolvedIdentity = $Identity
+  $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+  foreach ($key in (Get-IdentityKeys -Value $Identity)) {
+    [void]$keys.Add($key)
+  }
+
+  $recipient = $null
+  try {
+    $recipient = Get-EXORecipient -Identity $Identity -ErrorAction Stop
+  } catch {
+    try {
+      $recipient = Get-Recipient -Identity $Identity -ErrorAction Stop
+    } catch {
+      $recipient = $null
+    }
+  }
+
+  if ($recipient) {
+    foreach ($candidate in @(
+      $recipient.DisplayName,
+      $recipient.Name,
+      $recipient.Alias,
+      $recipient.Identity,
+      $recipient.PrimarySmtpAddress,
+      $recipient.WindowsEmailAddress,
+      $recipient.UserPrincipalName,
+      $recipient.ExternalEmailAddress
+    )) {
+      foreach ($key in (Get-IdentityKeys -Value $candidate)) {
+        [void]$keys.Add($key)
+      }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$recipient.PrimarySmtpAddress)) {
+      $resolvedIdentity = [string]$recipient.PrimarySmtpAddress
+    } elseif (-not [string]::IsNullOrWhiteSpace([string]$recipient.UserPrincipalName)) {
+      $resolvedIdentity = [string]$recipient.UserPrincipalName
+    } elseif (-not [string]::IsNullOrWhiteSpace([string]$recipient.Identity)) {
+      $resolvedIdentity = [string]$recipient.Identity
+    }
+  }
+
+  return @{
+    Identity = $resolvedIdentity
+    Keys = @($keys)
+  }
 }
 
 function Invoke-MailboxSync {
@@ -210,44 +326,74 @@ function Invoke-MailboxSync {
         $_.User.DisplayName -notin @('Default', 'Anonymous')
       }
     )
-    $existingManagerLookup = @{}
+    $existingManagerEntries = @()
     foreach ($permission in $existingManagerPermissions) {
-      $existingManagerLookup[$permission.User.DisplayName.ToLowerInvariant()] = $permission
+      $entryKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+      foreach ($key in (Get-IdentityKeys -Value $permission.User)) {
+        [void]$entryKeys.Add($key)
+      }
+      $displayName = [string]$permission.User.DisplayName
+      if (-not [string]::IsNullOrWhiteSpace($displayName)) {
+        $resolvedPermissionUser = Resolve-RecipientIdentity -Identity $displayName
+        foreach ($key in $resolvedPermissionUser.Keys) {
+          [void]$entryKeys.Add($key)
+        }
+      }
+
+      $existingManagerEntries += @{
+        Permission = $permission
+        DisplayName = $displayName
+        Keys = @($entryKeys)
+      }
     }
 
-    $desiredManagerLookup = @{}
+    $desiredManagerKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $resolvedManagers = @()
     foreach ($manager in $managerList) {
-      $desiredManagerLookup[$manager.ToLowerInvariant()] = $manager
+      $resolvedManager = Resolve-RecipientIdentity -Identity $manager
+      foreach ($key in $resolvedManager.Keys) {
+        [void]$desiredManagerKeys.Add($key)
+      }
+      $resolvedManagers += $resolvedManager
     }
 
-    foreach ($manager in $managerList) {
+    foreach ($resolvedManager in $resolvedManagers) {
+      $managerIdentity = [string]$resolvedManager.Identity
+      $matchingPermission = $null
+      foreach ($entry in $existingManagerEntries) {
+        if ($entry.Keys | Where-Object { $resolvedManager.Keys -contains $_ } | Select-Object -First 1) {
+          $matchingPermission = $entry.Permission
+          break
+        }
+      }
+
       try {
-        if ($existingManagerLookup.ContainsKey($manager.ToLowerInvariant())) {
+        if ($matchingPermission) {
           Set-MailboxFolderPermission `
             -Identity $calendarIdentity `
-            -User $manager `
+            -User $managerIdentity `
             -AccessRights Editor `
             -ErrorAction Stop | Out-Null
         } else {
           Add-MailboxFolderPermission `
             -Identity $calendarIdentity `
-            -User $manager `
+            -User $managerIdentity `
             -AccessRights Editor `
             -ErrorAction Stop | Out-Null
         }
       } catch {
-        if ($_.Exception.Message -notmatch 'already') {
+        if ($_.Exception.Message -notmatch 'already' -and $_.Exception.Message -notmatch 'existing permission entry') {
           throw
         }
       }
     }
 
-    foreach ($permission in $existingManagerPermissions) {
-      $existingManager = $permission.User.DisplayName
+    foreach ($entry in $existingManagerEntries) {
+      $existingManager = $entry.DisplayName
       if ([string]::IsNullOrWhiteSpace($existingManager)) {
         continue
       }
-      if ($desiredManagerLookup.ContainsKey($existingManager.ToLowerInvariant())) {
+      if ($entry.Keys | Where-Object { $desiredManagerKeys.Contains($_) } | Select-Object -First 1) {
         continue
       }
       Remove-MailboxFolderPermission `
