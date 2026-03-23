@@ -4,7 +4,7 @@
     "version": "8.0.2",
     "items": [
         {
-            "url": "https://raw.githubusercontent.com/Autotrace-au/FleetBridge-MyGeotab-AddIn/main/mygeotab-addin/index.html?v=8.0.2",
+            "url": "https://raw.githubusercontent.com/Autotrace-au/FleetBridge-MyGeotab-AddIn/main/mygeotab-addin/index.html?v=8.1.0",
             "path": "ActivityLink/",
             "menuName": {
                 "en": "FleetBridge Properties"
