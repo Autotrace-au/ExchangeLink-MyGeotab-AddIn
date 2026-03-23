@@ -556,9 +556,23 @@
                         <input type="number" id="maxDevicesLimit" min="0" max="1000" step="10" value="0" placeholder="0 = all" style="width: 80px; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px;">
                         <span style="font-size: 12px; color: var(--text-muted);">(0 = all devices)</span>
                     </div>
-                    <span id="syncProgress" style="display: none; color: var(--text-muted); font-size: 13px;">
-                        <span class="loading-spinner"></span> Synchronising...
-                    </span>
+                </div>
+
+                <div id="syncProgressPanel" class="sync-progress-panel" style="display: none;">
+                    <div class="sync-progress-header">
+                        <div>
+                            <div id="syncProgressStage" class="sync-progress-stage">Queued</div>
+                            <div id="syncProgressMessage" class="sync-progress-message">Waiting to start...</div>
+                        </div>
+                        <div id="syncProgressPercent" class="sync-progress-percent">0%</div>
+                    </div>
+                    <div class="sync-progress-track" aria-hidden="true">
+                        <div id="syncProgressBar" class="sync-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="sync-progress-meta">
+                        <span id="syncProgressCount">0 / 0 processed</span>
+                        <span id="syncProgressBreakdown">0 successful, 0 failed</span>
+                    </div>
                 </div>
 
                 <div id="syncResultContainer" style="display: none; margin-top: 20px; padding: 16px; background-color: var(--light-bg); border-radius: 8px; border: 1px solid var(--border-color);">
@@ -2096,9 +2110,69 @@
                 updateSyncStatus('Webhook URL saved successfully.', 'success');
             }
 
+            function getSyncProgressElements() {
+                return {
+                    panel: document.getElementById('syncProgressPanel'),
+                    stage: document.getElementById('syncProgressStage'),
+                    message: document.getElementById('syncProgressMessage'),
+                    percent: document.getElementById('syncProgressPercent'),
+                    bar: document.getElementById('syncProgressBar'),
+                    count: document.getElementById('syncProgressCount'),
+                    breakdown: document.getElementById('syncProgressBreakdown')
+                };
+            }
+
+            function setSyncProgressState(type) {
+                const { panel } = getSyncProgressElements();
+                if (!panel) return;
+
+                panel.classList.remove('is-success', 'is-error');
+                if (type === 'success') {
+                    panel.classList.add('is-success');
+                } else if (type === 'error') {
+                    panel.classList.add('is-error');
+                }
+            }
+
+            function renderSyncProgress(progress = {}) {
+                const { panel, stage, message, percent, bar, count, breakdown } = getSyncProgressElements();
+                if (!panel || !stage || !message || !percent || !bar || !count || !breakdown) return;
+
+                const total = Math.max(0, Number(progress.total) || 0);
+                const processed = Math.max(0, Number(progress.processed) || 0);
+                const successful = Math.max(0, Number(progress.successful) || 0);
+                const failed = Math.max(0, Number(progress.failed) || 0);
+
+                let percentValue = Number(progress.percentComplete);
+                if (!Number.isFinite(percentValue)) {
+                    percentValue = total > 0 ? Math.round((processed / total) * 100) : 0;
+                }
+                percentValue = Math.max(0, Math.min(100, percentValue));
+
+                panel.style.display = 'block';
+                stage.textContent = progress.currentStage || 'Queued';
+                message.textContent = progress.message || 'Waiting to start...';
+                percent.textContent = `${percentValue}%`;
+                bar.style.width = `${percentValue}%`;
+                count.textContent = `${processed} / ${total} processed`;
+                breakdown.textContent = `${successful} successful, ${failed} failed`;
+            }
+
+            function resetSyncProgress() {
+                setSyncProgressState('info');
+                renderSyncProgress({
+                    currentStage: 'Queued',
+                    message: 'Waiting to start...',
+                    total: 0,
+                    processed: 0,
+                    successful: 0,
+                    failed: 0,
+                    percentComplete: 0
+                });
+            }
+
             async function triggerSync() {
                 const triggerBtn = document.getElementById('triggerSyncBtn');
-                const syncProgress = document.getElementById('syncProgress');
                 const syncResultContainer = document.getElementById('syncResultContainer');
                 const syncResult = document.getElementById('syncResult');
                 const syncSummary = document.getElementById('syncSummary');
@@ -2114,9 +2188,7 @@
 
                 try {
                     triggerBtn.disabled = true;
-                    syncProgress.style.display = 'inline-flex';
-                    syncProgress.style.alignItems = 'center';
-                    syncProgress.style.gap = '8px';
+                    resetSyncProgress();
                     syncResultContainer.style.display = 'none';
                     updateSyncStatus('Queueing sync job...', 'info');
 
@@ -2150,6 +2222,15 @@
 
                     updateSyncStatus(`Sync job queued. Job ID: ${result.jobId}`, 'info');
                     syncResultContainer.style.display = 'block';
+                    renderSyncProgress({
+                        currentStage: result.currentStage || 'Queued',
+                        message: result.message || 'Waiting for background sync job to start...',
+                        total: 0,
+                        processed: 0,
+                        successful: 0,
+                        failed: 0,
+                        percentComplete: 0
+                    });
                     syncSummary.innerHTML = '<div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">Waiting for background sync job to start...</div>';
                     syncResult.textContent = JSON.stringify({ jobId: result.jobId, statusUrl: result.statusUrl }, null, 2);
 
@@ -2163,9 +2244,18 @@
                     syncSummary.innerHTML = '';
                     syncResult.textContent = `Error: ${error.message}\n\nPlease check:\n1. Function App URL is correct\n2. Function App is deployed and healthy\n3. Backend Exchange configuration is valid\n4. Key Vault secrets are present\n5. Network connectivity to Azure Functions\n\nSee browser console for more details.`;
                     syncResultContainer.style.display = 'block';
+                    renderSyncProgress({
+                        currentStage: 'Failed',
+                        message: error.message,
+                        total: 0,
+                        processed: 0,
+                        successful: 0,
+                        failed: 0,
+                        percentComplete: 0
+                    });
+                    setSyncProgressState('error');
                 } finally {
                     triggerBtn.disabled = false;
-                    syncProgress.style.display = 'none';
                 }
             }
 
@@ -2223,15 +2313,31 @@
                     }
 
                     const processed = payload.processed || 0;
+                    const total = payload.total || 0;
                     const successful = payload.successful || 0;
                     const failed = payload.failed || 0;
                     const status = payload.status || 'unknown';
+                    const percentComplete = Number.isFinite(payload.percentComplete)
+                        ? payload.percentComplete
+                        : (total > 0 ? Math.round((processed / total) * 100) : 0);
 
                     statusUpdater(`Sync job ${status}. Processed ${processed}, successful ${successful}, failed ${failed}.`, status === 'failed' ? 'error' : 'info');
+                    renderSyncProgress({
+                        currentStage: payload.currentStage || status,
+                        message: payload.message || `Sync job ${status}`,
+                        total,
+                        processed,
+                        successful,
+                        failed,
+                        percentComplete
+                    });
                     summaryElement.innerHTML = `
                         <div style="padding: 12px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
                             <div><strong>Job ID:</strong> ${jobId}</div>
                             <div><strong>Status:</strong> ${status}</div>
+                            <div><strong>Stage:</strong> ${payload.currentStage || status}</div>
+                            <div><strong>Progress:</strong> ${percentComplete}%</div>
+                            <div><strong>Total:</strong> ${total}</div>
                             <div><strong>Processed:</strong> ${processed}</div>
                             <div><strong>Successful:</strong> ${successful}</div>
                             <div><strong>Failed:</strong> ${failed}</div>
@@ -2240,6 +2346,7 @@
                     renderSyncResults(payload.results, resultElement);
 
                     if (status === 'completed' || status === 'failed') {
+                        setSyncProgressState(status === 'completed' && !failed ? 'success' : (status === 'failed' ? 'error' : 'info'));
                         return payload;
                     }
 
@@ -2252,6 +2359,16 @@
             function renderSyncResult(result, syncSummary, syncResult, syncResultContainer) {
                 const statusType = result.status === 'completed' && !result.failed ? 'success' : (result.status === 'failed' ? 'error' : 'warning');
                 updateSyncStatus(result.message || `Sync job ${result.status}`, statusType);
+                renderSyncProgress({
+                    currentStage: result.currentStage || (result.status === 'completed' ? 'Completed' : result.status),
+                    message: result.message || `Sync job ${result.status}`,
+                    total: result.total || result.processed || 0,
+                    processed: result.processed || 0,
+                    successful: result.successful || 0,
+                    failed: result.failed || 0,
+                    percentComplete: typeof result.percentComplete === 'number' ? result.percentComplete : 100
+                });
+                setSyncProgressState(statusType);
 
                 syncSummary.innerHTML = `
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px;">
@@ -2274,6 +2391,8 @@
                     </div>
                     <div style="font-size: 12px; color: var(--text-muted);">
                         <strong>Job ID:</strong> ${result.jobId || 'n/a'}
+                        <br><strong>Stage:</strong> ${result.currentStage || (result.status || 'unknown')}
+                        <br><strong>Total Devices:</strong> ${result.total || result.processed || 0}
                         ${result.resultsTruncated ? '<br><strong>Note:</strong> Detailed results were truncated for storage.' : ''}
                     </div>
                 `;

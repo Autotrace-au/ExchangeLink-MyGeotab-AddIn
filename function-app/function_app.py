@@ -187,6 +187,46 @@ def serialize_results(results: list[dict[str, Any]]) -> tuple[str, bool]:
     return truncated_payload, True
 
 
+def percent_complete(processed: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    return max(0, min(100, round((processed / total) * 100)))
+
+
+def update_job_progress(
+    job_id: str,
+    *,
+    status: str = "running",
+    current_stage: str,
+    message: str,
+    total: int | None = None,
+    processed: int | None = None,
+    successful: int | None = None,
+    failed: int | None = None,
+) -> None:
+    entity = get_job_entity(job_id) or {}
+
+    total_value = int(total if total is not None else entity.get("total", 0) or 0)
+    processed_value = int(processed if processed is not None else entity.get("processed", 0) or 0)
+    successful_value = int(successful if successful is not None else entity.get("successful", 0) or 0)
+    failed_value = int(failed if failed is not None else entity.get("failed", 0) or 0)
+
+    merge_job_entity(
+        job_id,
+        {
+            "status": status,
+            "updatedAt": utc_now_iso(),
+            "currentStage": current_stage,
+            "message": message,
+            "total": total_value,
+            "processed": processed_value,
+            "successful": successful_value,
+            "failed": failed_value,
+            "percentComplete": percent_complete(processed_value, total_value),
+        },
+    )
+
+
 def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
     results: Any = []
     results_json = entity.get("resultsJson", "[]")
@@ -202,10 +242,13 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
         "updatedAt": entity.get("updatedAt"),
         "startedAt": entity.get("startedAt"),
         "completedAt": entity.get("completedAt"),
+        "currentStage": entity.get("currentStage", ""),
         "requestedMaxDevices": entity.get("requestedMaxDevices", 0),
+        "total": entity.get("total", 0),
         "processed": entity.get("processed", 0),
         "successful": entity.get("successful", 0),
         "failed": entity.get("failed", 0),
+        "percentComplete": entity.get("percentComplete", 0),
         "executionTimeMs": entity.get("executionTimeMs", 0),
         "message": entity.get("message", ""),
         "error": entity.get("error", ""),
@@ -596,10 +639,14 @@ def invoke_exchange_sync_batch(devices: list[dict[str, Any]]) -> list[dict[str, 
             pass
 
 
-def process_devices(devices: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, int]:
+def process_devices(
+    devices: list[dict[str, Any]],
+    progress_callback: Any | None = None,
+) -> tuple[list[dict[str, Any]], int, int]:
     max_workers = max(1, int_setting("SYNC_MAX_WORKERS", 4))
     batch_size = max(1, int_setting("SYNC_BATCH_SIZE", 20))
     device_batches = chunked(devices, batch_size)
+    total = len(devices)
 
     if max_workers == 1 or len(device_batches) <= 1:
         results = []
@@ -623,6 +670,12 @@ def process_devices(devices: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                             "message": str(exc),
                         }
                     )
+            if progress_callback:
+                progress_callback(
+                    processed=min(successful + failed, total),
+                    successful=successful,
+                    failed=failed,
+                )
         return results, successful, failed
 
     results: list[dict[str, Any] | None] = [None] * len(devices)
@@ -655,11 +708,17 @@ def process_devices(devices: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
                         "vehicleName": device["name"],
                         "message": str(exc),
                     }
+            if progress_callback:
+                progress_callback(
+                    processed=min(successful + failed, total),
+                    successful=successful,
+                    failed=failed,
+                )
 
     return [item for item in results if item is not None], successful, failed
 
 
-def run_sync(body: dict[str, Any]) -> dict[str, Any]:
+def run_sync(body: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
     max_devices = parse_int(body.get("maxDevices", 0), 0)
     started_at = utc_now()
 
@@ -669,8 +728,45 @@ def run_sync(body: dict[str, Any]) -> dict[str, Any]:
 
     logging.info("sync job started maxDevices=%s database=%s server=%s", max_devices, database, server)
 
+    if job_id:
+        update_job_progress(
+            job_id,
+            current_stage="Loading devices",
+            message="Loading devices from MyGeotab",
+            total=0,
+            processed=0,
+            successful=0,
+            failed=0,
+        )
+
     devices = fetch_mygeotab_devices(database, username, password, server, max_devices)
-    results, successful, failed = process_devices(devices)
+    total_devices = len(devices)
+
+    if job_id:
+        update_job_progress(
+            job_id,
+            current_stage="Syncing mailboxes",
+            message="Syncing devices with Exchange Online",
+            total=total_devices,
+            processed=0,
+            successful=0,
+            failed=0,
+        )
+
+    def progress_callback(*, processed: int, successful: int, failed: int) -> None:
+        if not job_id:
+            return
+        update_job_progress(
+            job_id,
+            current_stage="Syncing mailboxes",
+            message=f"Syncing devices with Exchange Online ({processed}/{total_devices})",
+            total=total_devices,
+            processed=processed,
+            successful=successful,
+            failed=failed,
+        )
+
+    results, successful, failed = process_devices(devices, progress_callback if job_id else None)
     execution_time_ms = int((utc_now() - started_at).total_seconds() * 1000)
     overall_success = failed == 0
 
@@ -678,6 +774,9 @@ def run_sync(body: dict[str, Any]) -> dict[str, Any]:
         "success": overall_success,
         "mode": "single-tenant",
         "message": "Sync completed" if overall_success else "Sync completed with failures",
+        "currentStage": "Completed",
+        "total": total_devices,
+        "percentComplete": 100 if total_devices == 0 or successful + failed >= total_devices else percent_complete(successful + failed, total_devices),
         "processed": len(devices),
         "successful": successful,
         "failed": failed,
@@ -809,10 +908,13 @@ def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
             "status": "queued",
             "createdAt": created_at,
             "updatedAt": created_at,
+            "currentStage": "Queued",
             "requestedMaxDevices": max_devices,
+            "total": 0,
             "processed": 0,
             "successful": 0,
             "failed": 0,
+            "percentComplete": 0,
             "executionTimeMs": 0,
             "message": "Sync job queued",
             "error": "",
@@ -836,8 +938,14 @@ def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
             "accepted": True,
             "jobId": job_id,
             "status": "queued",
+            "currentStage": "Queued",
             "message": "Sync job queued",
             "statusUrl": f"/api/sync-status?jobId={job_id}",
+            "total": 0,
+            "processed": 0,
+            "successful": 0,
+            "failed": 0,
+            "percentComplete": 0,
             "timestamp": created_at,
             "targetModel": {
                 "mailboxLookup": "serial",
@@ -901,13 +1009,14 @@ def process_sync_job(msg: func.QueueMessage) -> None:
             "status": "running",
             "startedAt": started_at,
             "updatedAt": started_at,
-            "message": "Sync job running",
+            "currentStage": "Starting",
+            "message": "Sync job starting",
             "error": "",
         },
     )
 
     try:
-        result = run_sync(request_body)
+        result = run_sync(request_body, job_id=job_id)
         completed_at = utc_now_iso()
         results_json, results_truncated = serialize_results(result["results"])
         merge_job_entity(
@@ -916,9 +1025,12 @@ def process_sync_job(msg: func.QueueMessage) -> None:
                 "status": "completed",
                 "updatedAt": completed_at,
                 "completedAt": completed_at,
+                "currentStage": result.get("currentStage", "Completed"),
+                "total": result.get("total", result["processed"]),
                 "processed": result["processed"],
                 "successful": result["successful"],
                 "failed": result["failed"],
+                "percentComplete": result.get("percentComplete", 100),
                 "executionTimeMs": result["executionTimeMs"],
                 "message": result["message"],
                 "error": "",
@@ -935,6 +1047,7 @@ def process_sync_job(msg: func.QueueMessage) -> None:
                 "status": "failed",
                 "updatedAt": completed_at,
                 "completedAt": completed_at,
+                "currentStage": "Failed",
                 "message": "Sync job failed",
                 "error": str(exc),
             },
