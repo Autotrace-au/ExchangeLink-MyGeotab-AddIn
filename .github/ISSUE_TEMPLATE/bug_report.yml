@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a defect in the FleetBridge add-in, function app, deployment, or docs.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for reproducible defects in FleetBridge.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the repository is affected?
+      options:
+        - mygeotab-addin
+        - function-app
+        - infra
+        - docs
+        - github-actions
+        - scripts
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+      placeholder: A short description of the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact steps so the issue can be reproduced.
+      placeholder: |
+        1. Open...
+        2. Configure...
+        3. Trigger...
+        4. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      placeholder: What actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include any relevant deployment or runtime context.
+      placeholder: |
+        - Environment: local / test / production
+        - MyGeotab server/database:
+        - Azure Function App version or image:
+        - Browser:
+        - Tenant-specific notes:
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Paste relevant logs, stack traces, screenshots, or request/response details.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Describe user impact, frequency, or operational risk.
+      placeholder: Sync blocked for all devices in one tenant, intermittent UI issue, etc.
+    validations:
+      required: false
+
