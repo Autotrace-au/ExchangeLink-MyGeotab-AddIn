@@ -94,6 +94,18 @@
 #fleetSyncAddin .btn-success:hover:not(:disabled) { background: linear-gradient(135deg, #34d399 0%, var(--success-color) 100%); }
 #fleetSyncAddin .btn-secondary { background: linear-gradient(135deg, var(--secondary-color) 0%, var(--secondary-dark) 100%); color: #ffffff; }
 #fleetSyncAddin .btn-secondary:hover:not(:disabled) { background: linear-gradient(135deg, #94a3b8 0%, var(--secondary-color) 100%); }
+#fleetSyncAddin .sync-progress-panel { margin-top: 18px; padding: 16px; background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%); border: 1px solid #bfdbfe; border-radius: 12px; }
+#fleetSyncAddin .sync-progress-panel.is-success { background: linear-gradient(135deg, #ecfdf5 0%, #f8fafc 100%); border-color: #86efac; }
+#fleetSyncAddin .sync-progress-panel.is-error { background: linear-gradient(135deg, #fef2f2 0%, #fff7ed 100%); border-color: #fca5a5; }
+#fleetSyncAddin .sync-progress-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
+#fleetSyncAddin .sync-progress-stage { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--primary-dark); }
+#fleetSyncAddin .sync-progress-message { margin-top: 4px; font-size: 13px; color: var(--text-muted); }
+#fleetSyncAddin .sync-progress-percent { font-size: 24px; font-weight: 800; color: var(--text-color); line-height: 1; white-space: nowrap; }
+#fleetSyncAddin .sync-progress-track { height: 12px; border-radius: 999px; background: rgba(148, 163, 184, 0.25); overflow: hidden; margin-top: 6px; }
+#fleetSyncAddin .sync-progress-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--primary-color) 0%, var(--info-color) 100%); transition: width 0.35s ease; }
+#fleetSyncAddin .sync-progress-panel.is-success .sync-progress-fill { background: linear-gradient(90deg, var(--success-dark) 0%, var(--success-color) 100%); }
+#fleetSyncAddin .sync-progress-panel.is-error .sync-progress-fill { background: linear-gradient(90deg, var(--error-dark) 0%, #f97316 100%); }
+#fleetSyncAddin .sync-progress-meta { margin-top: 10px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
 #fleetSyncAddin .help-section { background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%); border-color: #c4b5fd; }
 #fleetSyncAddin .help-section ul { margin-left: 20px; margin-top: 12px; margin-bottom: 12px; }
 #fleetSyncAddin .help-section li { margin-bottom: 8px; color: var(--text-color); }
@@ -162,6 +174,7 @@
     #fleetSyncAddin .content-wrapper { padding: 20px; }
     #fleetSyncAddin section { padding: 16px; }
     #fleetSyncAddin .property-item { flex-direction: column; text-align: center; }
+    #fleetSyncAddin .sync-progress-header { flex-direction: column; }
     #fleetSyncAddin .property-icon { margin-right: 0; margin-bottom: 12px; }
     #fleetSyncAddin footer { padding: 20px; }
 }
@@ -2350,7 +2363,7 @@
                         return payload;
                     }
 
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
 
                 throw new Error('Sync job polling timed out before completion.');
