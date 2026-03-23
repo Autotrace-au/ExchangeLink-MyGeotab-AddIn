@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose an enhancement to FleetBridge.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for product, operational, or developer-experience improvements.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the repository would this change affect?
+      options:
+        - mygeotab-addin
+        - function-app
+        - infra
+        - docs
+        - github-actions
+        - scripts
+        - cross-cutting
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What pain point or limitation are you trying to solve?
+      placeholder: Today, users/operators/developers cannot...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want.
+      placeholder: Add support for...
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: Expected value
+      description: Why is this worth doing?
+      placeholder: Reduced manual work, lower deployment risk, better observability, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or other solutions you considered.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and constraints
+      description: Include tenant-specific constraints, rollout concerns, or non-goals if relevant.
+    validations:
+      required: false
+
