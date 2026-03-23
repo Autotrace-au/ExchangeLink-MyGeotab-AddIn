@@ -1,0 +1,81 @@
+name: PR Code Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  code-review:
+    name: Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate Python syntax
+        run: python -m py_compile function-app/function_app.py
+
+      - name: Validate manifest JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          repo_manifest = Path("configuration.json")
+          addin_manifest = Path("mygeotab-addin/configuration.json")
+
+          repo_data = json.loads(repo_manifest.read_text(encoding="utf-8"))
+          addin_data = json.loads(addin_manifest.read_text(encoding="utf-8"))
+
+          if repo_data != addin_data:
+              raise SystemExit("configuration.json and mygeotab-addin/configuration.json must stay in sync")
+
+          version = repo_data.get("version")
+          if not version:
+              raise SystemExit("configuration.json version is missing")
+
+          item_url = (((repo_data.get("items") or [{}])[0]).get("url") or "")
+          if f"v={version}" not in item_url:
+              raise SystemExit("configuration.json item URL must include the current version query string")
+          PY
+
+      - name: Validate MyGeotab add-in inline script syntax
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const html = fs.readFileSync('mygeotab-addin/index.html', 'utf8');
+          const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+          if (!scripts.length) {
+            throw new Error('No inline scripts found in mygeotab-addin/index.html');
+          }
+
+          scripts.forEach((script, index) => {
+            try {
+              new Function(script);
+            } catch (error) {
+              throw new Error(`Inline script ${index} failed to parse: ${error.message}`);
+            }
+          });
+          NODE
+

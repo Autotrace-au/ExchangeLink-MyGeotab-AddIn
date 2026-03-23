@@ -1,0 +1,73 @@
+name: PR MyGeotab Add-In Version Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  mygeotab-addin-version-review:
+    name: MyGeotab Add-In Version Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version bump when add-in changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(git diff --name-only "${BASE_REF}" "${HEAD_REF}")"
+          echo "Changed files:"
+          printf '%s\n' "${changed_files}"
+
+          addin_changed="$(printf '%s\n' "${changed_files}" | grep -E '^mygeotab-addin/' || true)"
+          if [ -z "${addin_changed}" ]; then
+            echo "No changes under mygeotab-addin/, skipping version bump enforcement."
+            exit 0
+          fi
+
+          if printf '%s\n' "${addin_changed}" | grep -qx 'mygeotab-addin/configuration.json'; then
+            :
+          else
+            echo "Changes under mygeotab-addin/ require a version bump in mygeotab-addin/configuration.json"
+            exit 1
+          fi
+
+          base_version="$(git show "${BASE_REF}:mygeotab-addin/configuration.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          head_version="$(python3 -c 'import json; print(json.load(open("mygeotab-addin/configuration.json", encoding="utf-8"))["version"])')"
+
+          echo "Base version: ${base_version}"
+          echo "Head version: ${head_version}"
+
+          if [ "${base_version}" = "${head_version}" ]; then
+            echo "mygeotab-addin/configuration.json version must change when files under mygeotab-addin/ are updated."
+            exit 1
+          fi
+
+          repo_base_version="$(git show "${BASE_REF}:configuration.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          repo_head_version="$(python3 -c 'import json; print(json.load(open("configuration.json", encoding="utf-8"))["version"])')"
+
+          if [ "${head_version}" != "${repo_head_version}" ]; then
+            echo "configuration.json and mygeotab-addin/configuration.json versions must match."
+            exit 1
+          fi
+
+          if [ "${base_version}" != "${repo_base_version}" ]; then
+            echo "Base branch manifest versions are already out of sync. Fix configuration.json and mygeotab-addin/configuration.json together."
+            exit 1
+          fi
+
+          echo "Add-in version bump check passed."
