@@ -461,7 +461,15 @@ try {
     $items = Get-Content -Raw -Path $InputJsonPath | ConvertFrom-Json -Depth 10
     $results = @()
     foreach ($item in $items) {
-      $results += Invoke-MailboxSync -Item (To-Hashtable -InputObject $item)
+      $result = Invoke-MailboxSync -Item (To-Hashtable -InputObject $item)
+      $results += $result
+      $progressEvent = @{
+        serial = [string]($result.serial ?? '')
+        success = [bool]($result.success)
+        message = [string]($result.message ?? '')
+        vehicleName = [string]($result.vehicleName ?? '')
+      }
+      Write-Output ("__FLEETBRIDGE_PROGRESS__" + (ConvertTo-Json -InputObject $progressEvent -Depth 5 -Compress))
     }
     Write-Output (ConvertTo-Json -InputObject @($results) -Depth 10 -Compress)
     exit 0

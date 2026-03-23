@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import azure.functions as func
@@ -28,6 +29,7 @@ SYNC_JOBS_TABLE_NAME = "FleetBridgeSyncJobs"
 SYNC_QUEUE_NAME = "fleetbridge-sync-jobs"
 SYNC_JOBS_PARTITION_KEY = "syncjobs"
 MAX_RESULT_STORAGE_CHARS = 800_000
+PROGRESS_LINE_PREFIX = "__FLEETBRIDGE_PROGRESS__"
 
 PROPERTY_NAME_MAP = {
     "Enable Equipment Booking": "bookable",
@@ -547,7 +549,10 @@ def build_exchange_sync_payload(device: dict[str, Any], settings: dict[str, Any]
     }
 
 
-def invoke_exchange_sync_batch(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def invoke_exchange_sync_batch(
+    devices: list[dict[str, Any]],
+    item_progress_callback: Any | None = None,
+) -> list[dict[str, Any]]:
     if not devices:
         return []
 
@@ -580,16 +585,37 @@ def invoke_exchange_sync_batch(devices: list[dict[str, Any]]) -> list[dict[str, 
             settings["certPassword"],
         ]
 
-        completed = subprocess.run(
+        completed = subprocess.Popen(
             command,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            bufsize=1,
         )
 
-        stdout = completed.stdout.strip()
+        stdout_lines: list[str] = []
+        if completed.stdout is not None:
+            for raw_line in completed.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                if line.startswith(PROGRESS_LINE_PREFIX):
+                    progress_payload = line[len(PROGRESS_LINE_PREFIX) :]
+                    if item_progress_callback:
+                        try:
+                            item_progress_callback(json.loads(progress_payload))
+                        except json.JSONDecodeError:
+                            stdout_lines.append(line)
+                    continue
+
+                stdout_lines.append(line)
+
+        stderr = completed.stderr.read().strip() if completed.stderr is not None else ""
+        return_code = completed.wait()
+        stdout = "\n".join(stdout_lines).strip()
         if not stdout:
-            raise RuntimeError(completed.stderr.strip() or "Exchange sync script returned no output")
+            raise RuntimeError(stderr or "Exchange sync script returned no output")
 
         try:
             results = json.loads(stdout.splitlines()[-1])
@@ -610,8 +636,8 @@ def invoke_exchange_sync_batch(devices: list[dict[str, Any]]) -> list[dict[str, 
             serial = payload_item["serial"]
             result = result_map.get(serial)
             if result is None:
-                if completed.returncode != 0:
-                    raise RuntimeError(completed.stderr.strip() or "Exchange sync failed")
+                if return_code != 0:
+                    raise RuntimeError(stderr or "Exchange sync failed")
                 result = {
                     "success": False,
                     "message": "Exchange sync script returned no result for device",
@@ -647,21 +673,81 @@ def process_devices(
     batch_size = max(1, int_setting("SYNC_BATCH_SIZE", 20))
     device_batches = chunked(devices, batch_size)
     total = len(devices)
+    progress_lock = Lock()
+    processed = 0
+    successful = 0
+    failed = 0
+    batch_progress_serials: dict[int, set[str]] = {}
+
+    def emit_progress_update(batch_key: int, item: dict[str, Any]) -> None:
+        nonlocal processed, successful, failed
+        serial = str(item.get("serial", "")).strip()
+        with progress_lock:
+            batch_progress_serials.setdefault(batch_key, set()).add(serial)
+            processed += 1
+            if item.get("success"):
+                successful += 1
+            else:
+                failed += 1
+            processed_value = min(processed, total)
+            successful_value = successful
+            failed_value = failed
+
+        if progress_callback:
+            progress_callback(
+                processed=processed_value,
+                successful=successful_value,
+                failed=failed_value,
+            )
+
+    def reconcile_batch_results(batch_key: int, batch_results: list[dict[str, Any]]) -> None:
+        nonlocal processed, successful, failed
+        for result in batch_results:
+            serial = str(result.get("serial", "")).strip()
+            with progress_lock:
+                seen_serials = batch_progress_serials.setdefault(batch_key, set())
+                if serial in seen_serials:
+                    continue
+                seen_serials.add(serial)
+                processed = min(processed + 1, total)
+                successful += 1 if result.get("success") else 0
+                failed += 0 if result.get("success") else 1
+                processed_state = processed
+                successful_state = successful
+                failed_state = failed
+
+            if progress_callback:
+                progress_callback(
+                    processed=processed_state,
+                    successful=successful_state,
+                    failed=failed_state,
+                )
+
+    def reconcile_batch_failure(batch_key: int, device_batch: list[dict[str, Any]]) -> None:
+        missing_results = [
+            {
+                "success": False,
+                "serial": device["serial"],
+                "vehicleName": device["name"],
+            }
+            for device in device_batch
+            if str(device["serial"]).strip() not in batch_progress_serials.setdefault(batch_key, set())
+        ]
+        reconcile_batch_results(batch_key, missing_results)
 
     if max_workers == 1 or len(device_batches) <= 1:
         results = []
-        successful = 0
-        failed = 0
         for device_batch in device_batches:
+            batch_key = id(device_batch)
             try:
-                batch_results = invoke_exchange_sync_batch(device_batch)
-                for result in batch_results:
-                    successful += 1 if result.get("success") else 0
-                    failed += 0 if result.get("success") else 1
-                    results.append(result)
+                batch_results = invoke_exchange_sync_batch(
+                    device_batch,
+                    item_progress_callback=lambda item, current_batch_key=batch_key: emit_progress_update(current_batch_key, item),
+                )
+                reconcile_batch_results(batch_key, batch_results)
+                results.extend(batch_results)
             except Exception as exc:
                 for device in device_batch:
-                    failed += 1
                     results.append(
                         {
                             "success": False,
@@ -670,37 +756,33 @@ def process_devices(
                             "message": str(exc),
                         }
                     )
-            if progress_callback:
-                progress_callback(
-                    processed=min(successful + failed, total),
-                    successful=successful,
-                    failed=failed,
-                )
+                reconcile_batch_failure(batch_key, device_batch)
         return results, successful, failed
 
     results: list[dict[str, Any] | None] = [None] * len(devices)
-    successful = 0
-    failed = 0
     serial_to_index = {device["serial"]: index for index, device in enumerate(devices)}
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
-            executor.submit(invoke_exchange_sync_batch, device_batch): device_batch
+            executor.submit(
+                invoke_exchange_sync_batch,
+                device_batch,
+                lambda item, current_batch_key=id(device_batch): emit_progress_update(current_batch_key, item),
+            ): device_batch
             for device_batch in device_batches
         }
         for future in as_completed(future_map):
             device_batch = future_map[future]
+            batch_key = id(device_batch)
             try:
                 batch_results = future.result()
+                reconcile_batch_results(batch_key, batch_results)
                 for result in batch_results:
-                    successful += 1 if result.get("success") else 0
-                    failed += 0 if result.get("success") else 1
                     index = serial_to_index.get(result["serial"])
                     if index is not None:
                         results[index] = result
             except Exception as exc:
                 for device in device_batch:
-                    failed += 1
                     index = serial_to_index[device["serial"]]
                     results[index] = {
                         "success": False,
@@ -708,12 +790,7 @@ def process_devices(
                         "vehicleName": device["name"],
                         "message": str(exc),
                     }
-            if progress_callback:
-                progress_callback(
-                    processed=min(successful + failed, total),
-                    successful=successful,
-                    failed=failed,
-                )
+                reconcile_batch_failure(batch_key, device_batch)
 
     return [item for item in results if item is not None], successful, failed
 
