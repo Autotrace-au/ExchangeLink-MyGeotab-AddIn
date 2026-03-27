@@ -18,9 +18,6 @@ param containerAppName string = '${appName}-${environmentName}-app'
 @description('Container Apps managed environment name.')
 param containerAppEnvironmentName string = '${appName}-${environmentName}-env'
 
-@description('Key Vault name.')
-param keyVaultName string
-
 @description('Azure Container Registry name.')
 param containerRegistryName string
 
@@ -57,21 +54,25 @@ param myGeotabServer string = 'my.geotab.com'
 @description('Whether first successful sync should make pre-created hidden mailboxes visible.')
 param makeMailboxVisibleOnFirstSync bool = true
 
-@description('Secret name containing the MyGeotab password.')
-param myGeotabPasswordSecretName string = 'MyGeotabPassword'
+@secure()
+@description('MyGeotab database name.')
+param myGeotabDatabase string
 
-@description('Secret name containing the Exchange certificate or secret material.')
-param exchangeCertificateSecretName string = 'ExchangeCertificate'
+@secure()
+@description('MyGeotab username.')
+param myGeotabUsername string
 
-@description('Optional object ID of the deployment principal that needs Key Vault secret write access.')
-param deploymentPrincipalObjectId string = ''
+@secure()
+@description('MyGeotab password.')
+param myGeotabPassword string
 
-@description('Principal type for the deployment principal role assignment.')
-@allowed([
-  'ServicePrincipal'
-  'User'
-])
-param deploymentPrincipalType string = 'ServicePrincipal'
+@secure()
+@description('Base64 encoded Exchange PFX certificate.')
+param exchangeCertificate string
+
+@secure()
+@description('Exchange PFX certificate password.')
+param exchangeCertificatePassword string
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
@@ -99,23 +100,6 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' =
   }
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: keyVaultName
-  location: location
-  properties: {
-    sku: {
-      family: 'A'
-      name: 'standard'
-    }
-    tenantId: subscription().tenantId
-    enabledForTemplateDeployment: true
-    enableRbacAuthorization: true
-    softDeleteRetentionInDays: 90
-    enableSoftDelete: true
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
 resource managedEnvironment 'Microsoft.App/managedEnvironments@2022-03-01' = {
   name: containerAppEnvironmentName
   location: location
@@ -128,7 +112,6 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2022-03-01' = {
 
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 var containerImage = '${containerRegistry.properties.loginServer}/${functionImageRepository}:${functionImageTag}'
-var keyVaultDnsSuffix = environment().suffixes.keyvaultDns
 
 resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
   name: containerAppName
@@ -158,6 +141,26 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
           name: 'azurewebjobsstorage'
           value: storageConnectionString
         }
+        {
+          name: 'mygeotab-database'
+          value: myGeotabDatabase
+        }
+        {
+          name: 'mygeotab-username'
+          value: myGeotabUsername
+        }
+        {
+          name: 'mygeotab-password'
+          value: myGeotabPassword
+        }
+        {
+          name: 'exchange-certificate'
+          value: exchangeCertificate
+        }
+        {
+          name: 'exchange-certificate-password'
+          value: exchangeCertificatePassword
+        }
       ]
     }
     template: {
@@ -171,16 +174,32 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
               secretRef: 'azurewebjobsstorage'
             }
             {
+              name: 'MYGEOTAB_DATABASE'
+              secretRef: 'mygeotab-database'
+            }
+            {
+              name: 'MYGEOTAB_USERNAME'
+              secretRef: 'mygeotab-username'
+            }
+            {
+              name: 'MYGEOTAB_PASSWORD'
+              secretRef: 'mygeotab-password'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE'
+              secretRef: 'exchange-certificate'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE_PASSWORD'
+              secretRef: 'exchange-certificate-password'
+            }
+            {
               name: 'FUNCTIONS_EXTENSION_VERSION'
               value: '~4'
             }
             {
               name: 'FUNCTIONS_WORKER_RUNTIME'
               value: 'python'
-            }
-            {
-              name: 'KEY_VAULT_URL'
-              value: 'https://${keyVault.name}${keyVaultDnsSuffix}/'
             }
             {
               name: 'EXCHANGE_TENANT_ID'
@@ -203,36 +222,12 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
               value: string(makeMailboxVisibleOnFirstSync)
             }
             {
-              name: 'MYGEOTAB_PASSWORD_SECRET_NAME'
-              value: myGeotabPasswordSecretName
-            }
-            {
-              name: 'MYGEOTAB_DATABASE_SECRET_NAME'
-              value: 'MyGeotabDatabase'
-            }
-            {
-              name: 'MYGEOTAB_USERNAME_SECRET_NAME'
-              value: 'MyGeotabUsername'
-            }
-            {
               name: 'MYGEOTAB_SERVER'
               value: myGeotabServer
             }
             {
-              name: 'EXCHANGE_CERTIFICATE_SECRET_NAME'
-              value: exchangeCertificateSecretName
-            }
-            {
-              name: 'EXCHANGE_CERTIFICATE_PASSWORD_SECRET_NAME'
-              value: 'ExchangeCertificatePassword'
-            }
-            {
               name: 'EXCHANGE_ORGANIZATION'
               value: equipmentDomain
-            }
-            {
-              name: 'EQUIPMENT_DOMAIN_SECRET_NAME'
-              value: 'EquipmentDomain'
             }
           ]
           resources: {
@@ -246,32 +241,6 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
         maxReplicas: containerAppMaxReplicas
       }
     }
-  }
-}
-
-resource keyVaultSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, containerApp.id, 'KeyVaultSecretsUser')
-  scope: keyVault
-  properties: {
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
-    )
-  }
-}
-
-resource keyVaultSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deploymentPrincipalObjectId)) {
-  name: guid(keyVault.id, deploymentPrincipalObjectId, 'KeyVaultSecretsOfficer')
-  scope: keyVault
-  properties: {
-    principalId: deploymentPrincipalObjectId
-    principalType: deploymentPrincipalType
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
-    )
   }
 }
 
@@ -290,6 +259,5 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 output containerAppName string = containerApp.name
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
-output keyVaultUrl string = 'https://${keyVault.name}${keyVaultDnsSuffix}/'
 output containerRegistryLoginServer string = containerRegistry.properties.loginServer
 output containerImage string = containerImage

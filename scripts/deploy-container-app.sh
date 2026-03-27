@@ -2,64 +2,53 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 <resource-group> <parameters-file>"
-  echo ""
-  echo "Example:"
-  echo "  $0 FleetBridgeRG infra/parameters.prod.json"
-  exit 1
-fi
-
-RESOURCE_GROUP="$1"
-PARAMETERS_FILE="$2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+require_env() {
+  local name="$1"
+  if [ -z "${!name:-}" ]; then
+    echo "Missing required environment variable: ${name}"
+    exit 1
+  fi
+}
+
+required_vars=(
+  RESOURCE_GROUP
+  LOCATION
+  STORAGE_ACCOUNT_NAME
+  CONTAINER_APP_NAME
+  CONTAINER_APP_ENVIRONMENT_NAME
+  CONTAINER_REGISTRY_NAME
+  EQUIPMENT_DOMAIN
+  EXCHANGE_TENANT_ID
+  EXCHANGE_CLIENT_ID
+  MYGEOTAB_DATABASE
+  MYGEOTAB_USERNAME
+  MYGEOTAB_PASSWORD
+  EXCHANGE_PFX_BASE64
+  EXCHANGE_PFX_PASSWORD
+)
+
+for var_name in "${required_vars[@]}"; do
+  require_env "${var_name}"
+done
+
+ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-prod}"
+APP_NAME="${APP_NAME:-fleetbridge}"
+FUNCTION_IMAGE_REPOSITORY="${FUNCTION_IMAGE_REPOSITORY:-fleetbridge-function}"
+FUNCTION_IMAGE_TAG="${FUNCTION_IMAGE_TAG_OVERRIDE:-${FUNCTION_IMAGE_TAG:-latest}}"
+CONTAINER_APP_MAX_REPLICAS="${CONTAINER_APP_MAX_REPLICAS:-3}"
+CONTAINER_CPU="${CONTAINER_CPU:-0.5}"
+CONTAINER_MEMORY="${CONTAINER_MEMORY:-1.0Gi}"
+DEFAULT_TIMEZONE="${DEFAULT_TIMEZONE:-AUS Eastern Standard Time}"
+MYGEOTAB_SERVER="${MYGEOTAB_SERVER:-my.geotab.com}"
+MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC="${MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC:-true}"
 
 if [ ! -f "${REPO_ROOT}/infra/main.bicep" ]; then
   echo "Missing infra/main.bicep"
   exit 1
 fi
-
-if [ ! -f "${REPO_ROOT}/${PARAMETERS_FILE}" ] && [ ! -f "${PARAMETERS_FILE}" ]; then
-  echo "Parameters file not found: ${PARAMETERS_FILE}"
-  exit 1
-fi
-
-PARAMETERS_PATH="${PARAMETERS_FILE}"
-if [ -f "${REPO_ROOT}/${PARAMETERS_FILE}" ]; then
-  PARAMETERS_PATH="${REPO_ROOT}/${PARAMETERS_FILE}"
-fi
-
-DEPLOYMENT_PRINCIPAL_OBJECT_ID="${DEPLOYMENT_PRINCIPAL_OBJECT_ID:-}"
-DEPLOYMENT_PRINCIPAL_TYPE="${DEPLOYMENT_PRINCIPAL_TYPE:-}"
-if [ -z "${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" ]; then
-  if DEPLOYMENT_PRINCIPAL_OBJECT_ID="$(az ad signed-in-user show --query id -o tsv 2>/dev/null)"; then
-    DEPLOYMENT_PRINCIPAL_TYPE="User"
-  elif [ -n "${AZURE_CLIENT_ID:-}" ]; then
-    DEPLOYMENT_PRINCIPAL_OBJECT_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
-    DEPLOYMENT_PRINCIPAL_TYPE="ServicePrincipal"
-  else
-    echo "Could not determine deployment principal object ID."
-    echo "Set DEPLOYMENT_PRINCIPAL_OBJECT_ID or AZURE_CLIENT_ID before running this script."
-    exit 1
-  fi
-fi
-
-if [ -z "${DEPLOYMENT_PRINCIPAL_TYPE}" ]; then
-  DEPLOYMENT_PRINCIPAL_TYPE="ServicePrincipal"
-fi
-
-echo "Deploying Azure resources to resource group: ${RESOURCE_GROUP}"
-LOCATION="$(python3 - <<'PY' "${PARAMETERS_PATH}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"].get("location", {}).get("value", "australiaeast"))
-PY
-)"
 
 echo "Ensuring resource group exists in location: ${LOCATION}"
 az group create \
@@ -67,78 +56,50 @@ az group create \
   --location "${LOCATION}" \
   >/dev/null
 
-az deployment group create \
-  --resource-group "${RESOURCE_GROUP}" \
-  --template-file "${REPO_ROOT}/infra/main.bicep" \
-  --parameters @"${PARAMETERS_PATH}" \
-  --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" \
-  --parameters deploymentPrincipalType="${DEPLOYMENT_PRINCIPAL_TYPE}"
+deploy_infra() {
+  az deployment group create \
+    --resource-group "${RESOURCE_GROUP}" \
+    --template-file "${REPO_ROOT}/infra/main.bicep" \
+    --parameters \
+      location="${LOCATION}" \
+      environmentName="${ENVIRONMENT_NAME}" \
+      appName="${APP_NAME}" \
+      storageAccountName="${STORAGE_ACCOUNT_NAME}" \
+      containerAppName="${CONTAINER_APP_NAME}" \
+      containerAppEnvironmentName="${CONTAINER_APP_ENVIRONMENT_NAME}" \
+      containerRegistryName="${CONTAINER_REGISTRY_NAME}" \
+      functionImageRepository="${FUNCTION_IMAGE_REPOSITORY}" \
+      functionImageTag="${FUNCTION_IMAGE_TAG}" \
+      containerAppMaxReplicas="${CONTAINER_APP_MAX_REPLICAS}" \
+      containerCpu="${CONTAINER_CPU}" \
+      containerMemory="${CONTAINER_MEMORY}" \
+      exchangeTenantId="${EXCHANGE_TENANT_ID}" \
+      exchangeClientId="${EXCHANGE_CLIENT_ID}" \
+      equipmentDomain="${EQUIPMENT_DOMAIN}" \
+      defaultTimezone="${DEFAULT_TIMEZONE}" \
+      myGeotabServer="${MYGEOTAB_SERVER}" \
+      makeMailboxVisibleOnFirstSync="${MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC}" \
+      myGeotabDatabase="${MYGEOTAB_DATABASE}" \
+      myGeotabUsername="${MYGEOTAB_USERNAME}" \
+      myGeotabPassword="${MYGEOTAB_PASSWORD}" \
+      exchangeCertificate="${EXCHANGE_PFX_BASE64}" \
+      exchangeCertificatePassword="${EXCHANGE_PFX_PASSWORD}" \
+    >/dev/null
+}
 
-CONTAINER_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
-import json
-import sys
+echo "Deploying Azure resources to resource group: ${RESOURCE_GROUP}"
+deploy_infra
 
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
+ACR_LOGIN_SERVER="$(az acr show --name "${CONTAINER_REGISTRY_NAME}" --resource-group "${RESOURCE_GROUP}" --query loginServer -o tsv)"
 
-print(data["parameters"]["containerAppName"]["value"])
-PY
-)"
-
-ACR_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"]["containerRegistryName"]["value"])
-PY
-)"
-
-IMAGE_REPOSITORY="$(python3 - <<'PY' "${PARAMETERS_PATH}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"].get("functionImageRepository", {}).get("value", "fleetbridge-function"))
-PY
-)"
-
-IMAGE_TAG="$(python3 - <<'PY' "${PARAMETERS_PATH}"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    data = json.load(handle)
-
-print(data["parameters"].get("functionImageTag", {}).get("value", "latest"))
-PY
-)"
-
-if [ -n "${FUNCTION_IMAGE_TAG_OVERRIDE:-}" ]; then
-  IMAGE_TAG="${FUNCTION_IMAGE_TAG_OVERRIDE}"
-fi
-
-ACR_LOGIN_SERVER="$(az acr show --name "${ACR_NAME}" --resource-group "${RESOURCE_GROUP}" --query loginServer -o tsv)"
-
-echo "Building and pushing backend container image: ${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+echo "Building and pushing backend container image: ${ACR_LOGIN_SERVER}/${FUNCTION_IMAGE_REPOSITORY}:${FUNCTION_IMAGE_TAG}"
 az acr build \
-  --registry "${ACR_NAME}" \
-  --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+  --registry "${CONTAINER_REGISTRY_NAME}" \
+  --image "${FUNCTION_IMAGE_REPOSITORY}:${FUNCTION_IMAGE_TAG}" \
   "${REPO_ROOT}/function-app"
 
-echo "Updating Container App image tag to: ${IMAGE_TAG}"
-az deployment group create \
-  --resource-group "${RESOURCE_GROUP}" \
-  --template-file "${REPO_ROOT}/infra/main.bicep" \
-  --parameters @"${PARAMETERS_PATH}" \
-  --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" \
-  --parameters deploymentPrincipalType="${DEPLOYMENT_PRINCIPAL_TYPE}" \
-  --parameters functionImageTag="${IMAGE_TAG}" \
-  >/dev/null
+echo "Re-deploying Container App with image tag: ${FUNCTION_IMAGE_TAG}"
+deploy_infra
 
 echo "Waiting for Container App ingress FQDN"
 for attempt in $(seq 1 30); do

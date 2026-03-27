@@ -1,18 +1,16 @@
 # Infrastructure
 
-This directory is reserved for the single-tenant Azure infrastructure definition.
+This directory contains the active single-tenant Azure infrastructure definition.
 
-Current scaffold:
+Current files:
 
-- `main.bicep` for the single-tenant Container Apps deployment
-- `parameters.example.json` for environment-specific values
-- `parameters.goa-test.json` as the active Garage of Awesome test config
-- `parameters.goa-prod.example.json` as the production template
+- `main.bicep` for the Azure Container Apps deployment
 
-The current deployment model uses:
+The active deployment model uses:
 
-- Azure Container Apps Consumption environment
+- Azure Container Apps Consumption
 - Azure Container Registry for the custom backend image
-- a custom backend container so PowerShell and ExchangeOnlineManagement are part of the runtime
+- Azure Storage for the Azure Functions host, queue, and table state
+- direct Container App secret injection from GitHub Actions
 
-The active intent is infrastructure-as-code for the Azure side. Retired imperative deployment assets are no longer included here.
+The runtime no longer depends on Key Vault for secret resolution.

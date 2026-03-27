@@ -14,8 +14,29 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      RESOURCE_GROUP: FleetBridgeGOATestRG
-      PARAMETERS_FILE: infra/parameters.goa-test.json
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+      ENVIRONMENT_NAME: ${{ vars.ENVIRONMENT_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      STORAGE_ACCOUNT_NAME: ${{ vars.STORAGE_ACCOUNT_NAME }}
+      CONTAINER_APP_NAME: ${{ vars.CONTAINER_APP_NAME }}
+      CONTAINER_APP_ENVIRONMENT_NAME: ${{ vars.CONTAINER_APP_ENVIRONMENT_NAME }}
+      CONTAINER_REGISTRY_NAME: ${{ vars.CONTAINER_REGISTRY_NAME }}
+      FUNCTION_IMAGE_REPOSITORY: ${{ vars.FUNCTION_IMAGE_REPOSITORY }}
+      CONTAINER_APP_MAX_REPLICAS: ${{ vars.CONTAINER_APP_MAX_REPLICAS }}
+      CONTAINER_CPU: ${{ vars.CONTAINER_CPU }}
+      CONTAINER_MEMORY: ${{ vars.CONTAINER_MEMORY }}
+      EQUIPMENT_DOMAIN: ${{ vars.EQUIPMENT_DOMAIN }}
+      EXCHANGE_TENANT_ID: ${{ vars.EXCHANGE_TENANT_ID }}
+      EXCHANGE_CLIENT_ID: ${{ vars.EXCHANGE_CLIENT_ID }}
+      DEFAULT_TIMEZONE: ${{ vars.DEFAULT_TIMEZONE }}
+      MYGEOTAB_SERVER: ${{ vars.MYGEOTAB_SERVER }}
+      MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC: ${{ vars.MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC }}
+      MYGEOTAB_DATABASE: ${{ secrets.MYGEOTAB_DATABASE }}
+      MYGEOTAB_USERNAME: ${{ secrets.MYGEOTAB_USERNAME }}
+      MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
+      EXCHANGE_PFX_BASE64: ${{ secrets.EXCHANGE_PFX_BASE64 }}
+      EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,50 +51,28 @@ jobs:
       - name: Deploy Container App Infrastructure and Image
         env:
           FUNCTION_IMAGE_TAG_OVERRIDE: ${{ github.sha }}
-        run: bash ./scripts/deploy-container-app.sh "${RESOURCE_GROUP}" "${PARAMETERS_FILE}"
+        run: bash ./scripts/deploy-container-app.sh
 
-      - name: Decode Exchange Certificate
-        env:
-          EXCHANGE_PFX_BASE64: ${{ secrets.EXCHANGE_PFX_BASE64 }}
+      - name: Resolve Container App URL
+        id: resolve_url
         run: |
-          printf '%s' "${EXCHANGE_PFX_BASE64}" | base64 --decode > /tmp/exchange-cert.pfx
-
-      - name: Seed Key Vault Secrets
-        env:
-          MYGEOTAB_DATABASE: ${{ secrets.MYGEOTAB_DATABASE }}
-          MYGEOTAB_USERNAME: ${{ secrets.MYGEOTAB_USERNAME }}
-          MYGEOTAB_PASSWORD: ${{ secrets.MYGEOTAB_PASSWORD }}
-          EXCHANGE_PFX_PASSWORD: ${{ secrets.EXCHANGE_PFX_PASSWORD }}
-        run: |
-          KEY_VAULT_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["keyVaultName"]["value"])' "${PARAMETERS_FILE}")"
-          EQUIPMENT_DOMAIN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["equipmentDomain"]["value"])' "${PARAMETERS_FILE}")"
-          bash ./scripts/seed-key-vault-secrets.sh \
-            "${KEY_VAULT_NAME}" \
-            "${MYGEOTAB_DATABASE}" \
-            "${MYGEOTAB_USERNAME}" \
-            "${MYGEOTAB_PASSWORD}" \
-            /tmp/exchange-cert.pfx \
-            "${EXCHANGE_PFX_PASSWORD}" \
-            "${EQUIPMENT_DOMAIN}"
+          CONTAINER_APP_FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)"
+          echo "container_app_url=https://${CONTAINER_APP_FQDN}" >> "${GITHUB_OUTPUT}"
 
       - name: Smoke Test Health
         run: |
-          CONTAINER_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["containerAppName"]["value"])' "${PARAMETERS_FILE}")"
-          CONTAINER_APP_FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)"
-          curl -fsS "https://${CONTAINER_APP_FQDN}/api/health"
+          curl -fsS "${{ steps.resolve_url.outputs.container_app_url }}/api/health"
 
       - name: Smoke Test Sync
         run: |
-          CONTAINER_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["containerAppName"]["value"])' "${PARAMETERS_FILE}")"
-          CONTAINER_APP_FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${RESOURCE_GROUP}" --query properties.configuration.ingress.fqdn -o tsv)"
           JOB_ID="$(curl -fsS -X POST \
-            "https://${CONTAINER_APP_FQDN}/api/sync-to-exchange" \
+            "${{ steps.resolve_url.outputs.container_app_url }}/api/sync-to-exchange" \
             -H 'Content-Type: application/json' \
             -d '{"maxDevices":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')"
           echo "Queued sync job: ${JOB_ID}"
           POLL_FAILURES=0
           for attempt in $(seq 1 60); do
-            if ! STATUS_JSON="$(curl -fsS --max-time 20 "https://${CONTAINER_APP_FQDN}/api/sync-status?jobId=${JOB_ID}")"; then
+            if ! STATUS_JSON="$(curl -fsS --max-time 20 "${{ steps.resolve_url.outputs.container_app_url }}/api/sync-status?jobId=${JOB_ID}")"; then
               POLL_FAILURES=$((POLL_FAILURES + 1))
               echo "Sync status poll failed (${attempt}/60), consecutive failures: ${POLL_FAILURES}"
               if [ "${POLL_FAILURES}" -ge 6 ]; then
