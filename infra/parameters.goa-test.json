@@ -14,20 +14,14 @@
     "storageAccountName": {
       "value": "fbgoatest20260313sa"
     },
-    "functionAppName": {
-      "value": "fb-goa-test-20260313-func"
+    "containerAppName": {
+      "value": "fb-goa-test-20260313-app"
     },
     "keyVaultName": {
       "value": "fb-goa-test-20260313-kv"
     },
-    "appServicePlanName": {
-      "value": "fb-goa-test-20260313-plan"
-    },
-    "appServicePlanSkuName": {
-      "value": "B2"
-    },
-    "appServicePlanSkuTier": {
-      "value": "Basic"
+    "containerAppEnvironmentName": {
+      "value": "fb-goa-test-20260313-env"
     },
     "containerRegistryName": {
       "value": "fbgoatest20260313acr"
@@ -37,6 +31,15 @@
     },
     "functionImageTag": {
       "value": "latest"
+    },
+    "containerAppMaxReplicas": {
+      "value": 3
+    },
+    "containerCpu": {
+      "value": "0.5"
+    },
+    "containerMemory": {
+      "value": "1.0Gi"
     },
     "exchangeTenantId": {
       "value": "a8713c4a-df53-4daf-8420-4dc43c792b68"

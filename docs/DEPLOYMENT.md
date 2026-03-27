@@ -2,7 +2,7 @@
 
 ## Deployment Target
 
-FleetBridge is deployed as a single-tenant Azure Function App environment.
+FleetBridge is deployed as a single-tenant Azure Container Apps environment.
 
 The active deployment target includes:
 
@@ -10,14 +10,14 @@ The active deployment target includes:
 - Storage Account
 - Key Vault
 - Azure Container Registry
-- Linux Function App on a Dedicated App Service plan
+- Container Apps managed environment and container app
 - managed identity
 - required Azure role assignments
 
 Current baseline:
 
-- Linux Dedicated B2 App Service plan
-- custom container Function App runtime
+- Consumption Azure Container Apps environment
+- custom backend container runtime
 
 ## Deployment Method
 
@@ -30,7 +30,7 @@ Primary workflow:
 Supporting scripts:
 
 - [bootstrap-github-actions.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/bootstrap-github-actions.sh)
-- [deploy-function-app.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/deploy-function-app.sh)
+- [deploy-container-app.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/deploy-container-app.sh)
 - [seed-key-vault-secrets.sh](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/scripts/seed-key-vault-secrets.sh)
 
 ## Configuration As Code Split
@@ -40,7 +40,7 @@ Supporting scripts:
 - Bicep templates
 - environment parameter files
 - GitHub Actions workflow definitions
-- Function App code
+- Azure Functions code
 - Add-In code
 
 ### In GitHub secrets / Key Vault
@@ -82,7 +82,7 @@ GitHub repository secrets required by the workflow:
 - `EXCHANGE_PFX_BASE64`
 - `EXCHANGE_PFX_PASSWORD`
 
-The deployment workflow seeds Key Vault with the runtime secrets expected by the Function App.
+The deployment workflow seeds Key Vault with the runtime secrets expected by the backend.
 
 ## End-To-End Deployment Flow
 
@@ -90,11 +90,11 @@ The deployment workflow seeds Key Vault with the runtime secrets expected by the
 2. Commit or select the target `infra` parameter file.
 3. Run the GitHub Actions deployment workflow.
 4. Provision Azure resources from Bicep.
-5. Build and push the Function App image.
-6. Configure the Function App to use that image.
+5. Build and push the backend image.
+6. Update the Container App to use that image.
 7. Seed Key Vault secrets.
 8. Run health and sync smoke tests.
-9. Enter the Function App base URL into the MyGeotab Add-In.
+9. Enter the backend base URL into the MyGeotab Add-In.
 
 ## Post-Deployment Steps In The Client Tenant
 
@@ -104,7 +104,7 @@ After Azure deployment is complete:
 2. Ensure each mailbox is based on the MyGeotab serial.
 3. Ensure each mailbox starts hidden.
 4. Open the MyGeotab Add-In.
-5. Enter and save the customer Function App URL.
+5. Enter and save the customer backend URL.
 6. Run a limited sync test.
 7. Confirm:
    - property updates apply from Manage Assets
@@ -144,8 +144,8 @@ A healthy deployment should satisfy all of the following:
 
 ## Known Operational Constraint
 
-The deployment pipeline rebuilds the custom Function App image on each deploy. That makes deployments slower than a plain zip-based Functions deployment, but it is required because the runtime must include PowerShell and `ExchangeOnlineManagement`.
+The deployment pipeline rebuilds the custom backend image on each deploy. That makes deployments slower than a plain zip-based Functions deployment, but it is required because the runtime must include PowerShell and `ExchangeOnlineManagement`.
 
 ## Scope
 
-This repository now contains only the active single-tenant Function App deployment path.
+This repository now contains only the active single-tenant Azure Container Apps deployment path.

@@ -1,6 +1,6 @@
 # Scripts
 
-This directory is reserved for operational scripts that support the single-tenant Function App deployment model.
+This directory is reserved for operational scripts that support the single-tenant Container Apps deployment model.
 
 Examples:
 
@@ -12,7 +12,7 @@ Historical scripts for the prior container-app and SaaS model have been removed 
 
 Current script:
 
-- `deploy-function-app.sh` deploys `infra/main.bicep` and then publishes `function-app/`
+- `deploy-container-app.sh` deploys `infra/main.bicep` and then publishes `function-app/`
 - `seed-key-vault-secrets.sh` stores the required single-tenant MyGeotab and Exchange secrets in Key Vault
 - `bootstrap-github-actions.sh` creates the GitHub Actions Azure identity and repository secrets
 

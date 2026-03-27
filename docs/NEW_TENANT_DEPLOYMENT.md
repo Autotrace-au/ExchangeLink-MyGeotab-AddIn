@@ -151,9 +151,9 @@ Edit `infra/parameters.customer-prod.json` and set:
 - `location`
 - `environmentName`
 - `storageAccountName`
-- `functionAppName`
+- `containerAppName`
 - `keyVaultName`
-- `appServicePlanName`
+- `containerAppEnvironmentName`
 - `containerRegistryName`
 - `exchangeTenantId`
 - `exchangeClientId`
@@ -167,7 +167,7 @@ Use globally unique names for:
 - storage account
 - key vault
 - container registry
-- function app
+- container app
 
 Use this template and replace the values:
 
@@ -180,9 +180,9 @@ Use this template and replace the values:
     "environmentName": { "value": "customer-prod" },
     "appName": { "value": "fleetbridge" },
     "storageAccountName": { "value": "replaceuniquestorage" },
-    "functionAppName": { "value": "replace-unique-function-app" },
+    "containerAppName": { "value": "replace-unique-container-app" },
     "keyVaultName": { "value": "replace-unique-keyvault" },
-    "appServicePlanName": { "value": "replace-prod-plan" },
+    "containerAppEnvironmentName": { "value": "replace-prod-container-env" },
     "containerRegistryName": { "value": "replaceuniqueacr" },
     "functionImageRepository": { "value": "fleetbridge-function" },
     "functionImageTag": { "value": "latest" },
@@ -275,8 +275,8 @@ Use these inputs:
 This workflow will:
 
 1. deploy the Azure infrastructure
-2. build and push the Function App container
-3. configure the Function App
+2. build and push the backend container
+3. configure the Container App
 4. seed Key Vault with runtime secrets
 5. run the health check
 
@@ -284,7 +284,7 @@ How to do it:
 
 1. Open your GitHub repository.
 2. Open `Actions`.
-3. Open `Deploy Single-Tenant Function App`.
+3. Open `Deploy Single-Tenant Container App`.
 4. Select `Run workflow`.
 5. Enter:
    - `resource_group`: your Azure resource group name
@@ -297,7 +297,7 @@ How to do it:
 Run:
 
 ```bash
-curl -fsS "https://<function-app-name>.azurewebsites.net/api/health"
+curl -fsS "https://<container-app-url>/api/health"
 ```
 
 Confirm:
@@ -307,10 +307,10 @@ Confirm:
 - MyGeotab config is detected
 - Exchange client config is detected
 
-If you do not know the function app name, print it from the parameter file:
+If you do not know the container app name, print it from the parameter file:
 
 ```bash
-python3 -c 'import json; print(json.load(open("infra/parameters.customer-prod.json", encoding="utf-8"))["parameters"]["functionAppName"]["value"])'
+python3 -c 'import json; print(json.load(open("infra/parameters.customer-prod.json", encoding="utf-8"))["parameters"]["containerAppName"]["value"])'
 ```
 
 ## Step 10: Run a one-device sync test
@@ -319,7 +319,7 @@ Queue the job:
 
 ```bash
 curl -fsS -X POST \
-  "https://<function-app-name>.azurewebsites.net/api/sync-to-exchange" \
+  "https://<container-app-url>/api/sync-to-exchange" \
   -H 'Content-Type: application/json' \
   -d '{"maxDevices":1}'
 ```
@@ -329,7 +329,7 @@ Copy the returned `jobId`.
 Poll the job:
 
 ```bash
-curl -fsS "https://<function-app-name>.azurewebsites.net/api/sync-status?jobId=<job-id>"
+curl -fsS "https://<container-app-url>/api/sync-status?jobId=<job-id>"
 ```
 
 Do not continue until:
@@ -356,7 +356,7 @@ This confirms the built-in workflow smoke test also passes.
 
 In the FleetBridge Add-In:
 
-1. enter the deployed Function App base URL
+1. enter the deployed backend base URL
 2. save settings
 3. test a property update
 4. test a limited sync
@@ -364,7 +364,7 @@ In the FleetBridge Add-In:
 The base URL format is:
 
 ```text
-https://<function-app-name>.azurewebsites.net
+https://<container-app-fqdn>.azurecontainerapps.io
 ```
 
 ## If Something Fails

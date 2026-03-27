@@ -14,14 +14,14 @@
     "storageAccountName": {
       "value": "fleetbridgeprodsa"
     },
-    "functionAppName": {
-      "value": "fleetbridge-prod-func"
+    "containerAppName": {
+      "value": "fleetbridge-prod-app"
     },
     "keyVaultName": {
       "value": "fleetbridge-prod-kv"
     },
-    "appServicePlanName": {
-      "value": "fleetbridge-prod-plan"
+    "containerAppEnvironmentName": {
+      "value": "fleetbridge-prod-env"
     },
     "containerRegistryName": {
       "value": "fleetbridgeprodacr"
@@ -31,6 +31,15 @@
     },
     "functionImageTag": {
       "value": "latest"
+    },
+    "containerAppMaxReplicas": {
+      "value": 3
+    },
+    "containerCpu": {
+      "value": "0.5"
+    },
+    "containerMemory": {
+      "value": "1.0Gi"
     },
     "exchangeTenantId": {
       "value": "00000000-0000-0000-0000-000000000000"

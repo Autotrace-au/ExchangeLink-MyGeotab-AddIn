@@ -14,14 +14,14 @@
     "storageAccountName": {
       "value": "replaceprodstorage"
     },
-    "functionAppName": {
-      "value": "replace-prod-function-app"
+    "containerAppName": {
+      "value": "replace-prod-container-app"
     },
     "keyVaultName": {
       "value": "replace-prod-keyvault"
     },
-    "appServicePlanName": {
-      "value": "replace-prod-plan"
+    "containerAppEnvironmentName": {
+      "value": "replace-prod-container-env"
     },
     "containerRegistryName": {
       "value": "replaceprodacr"
@@ -31,6 +31,15 @@
     },
     "functionImageTag": {
       "value": "latest"
+    },
+    "containerAppMaxReplicas": {
+      "value": 3
+    },
+    "containerCpu": {
+      "value": "0.5"
+    },
+    "containerMemory": {
+      "value": "1.0Gi"
     },
     "exchangeTenantId": {
       "value": "replace-tenant-id"

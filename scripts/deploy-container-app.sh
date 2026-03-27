@@ -74,18 +74,16 @@ az deployment group create \
   --parameters deploymentPrincipalObjectId="${DEPLOYMENT_PRINCIPAL_OBJECT_ID}" \
   --parameters deploymentPrincipalType="${DEPLOYMENT_PRINCIPAL_TYPE}"
 
-FUNCTION_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
+CONTAINER_APP_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
 import json
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     data = json.load(handle)
 
-print(data["parameters"]["functionAppName"]["value"])
+print(data["parameters"]["containerAppName"]["value"])
 PY
 )"
-
-FUNCTION_APP_HOST="${FUNCTION_APP_NAME}.azurewebsites.net"
 
 ACR_NAME="$(python3 - <<'PY' "${PARAMETERS_PATH}"
 import json
@@ -126,13 +124,13 @@ fi
 
 ACR_LOGIN_SERVER="$(az acr show --name "${ACR_NAME}" --resource-group "${RESOURCE_GROUP}" --query loginServer -o tsv)"
 
-echo "Building and pushing Function App container image: ${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+echo "Building and pushing backend container image: ${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 az acr build \
   --registry "${ACR_NAME}" \
   --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
   "${REPO_ROOT}/function-app"
 
-echo "Updating Function App container tag to: ${IMAGE_TAG}"
+echo "Updating Container App image tag to: ${IMAGE_TAG}"
 az deployment group create \
   --resource-group "${RESOURCE_GROUP}" \
   --template-file "${REPO_ROOT}/infra/main.bicep" \
@@ -142,15 +140,29 @@ az deployment group create \
   --parameters functionImageTag="${IMAGE_TAG}" \
   >/dev/null
 
-echo "Restarting Function App to pull the latest image"
-az functionapp restart \
-  --name "${FUNCTION_APP_NAME}" \
-  --resource-group "${RESOURCE_GROUP}"
-
-echo "Waiting for Function App health endpoint"
+echo "Waiting for Container App ingress FQDN"
 for attempt in $(seq 1 30); do
-  if curl -fsS --max-time 10 "https://${FUNCTION_APP_HOST}/api/health" >/dev/null 2>&1; then
-    echo "Function App is healthy: https://${FUNCTION_APP_HOST}/api/health"
+  CONTAINER_APP_FQDN="$(az containerapp show \
+    --name "${CONTAINER_APP_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --query properties.configuration.ingress.fqdn \
+    -o tsv 2>/dev/null || true)"
+  if [ -n "${CONTAINER_APP_FQDN}" ] && [ "${CONTAINER_APP_FQDN}" != "null" ]; then
+    break
+  fi
+  echo "Container App ingress not ready yet (attempt ${attempt}/30); waiting 10s"
+  sleep 10
+done
+
+if [ -z "${CONTAINER_APP_FQDN:-}" ] || [ "${CONTAINER_APP_FQDN}" = "null" ]; then
+  echo "Container App ingress did not become ready in time."
+  exit 1
+fi
+
+echo "Waiting for backend health endpoint"
+for attempt in $(seq 1 30); do
+  if curl -fsS --max-time 10 "https://${CONTAINER_APP_FQDN}/api/health" >/dev/null 2>&1; then
+    echo "Container App is healthy: https://${CONTAINER_APP_FQDN}/api/health"
     echo "Deployment complete."
     exit 0
   fi
@@ -160,5 +172,5 @@ for attempt in $(seq 1 30); do
 done
 
 echo "Deployment finished, but the health endpoint did not become ready in time."
-echo "Check container startup logs in the Azure Portal or via Kudu."
+echo "Check Container Apps revision and console logs in Azure."
 exit 1

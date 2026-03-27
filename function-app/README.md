@@ -1,6 +1,6 @@
-# Function App Workspace
+# Backend Workspace
 
-This directory is the active backend workspace for the new single-tenant Azure Function App implementation.
+This directory is the active backend workspace for the single-tenant Azure Functions implementation running in Azure Container Apps.
 
 Current scaffold:
 
@@ -28,7 +28,7 @@ Current sync behavior:
 
 Runtime note:
 
-- the Function App runtime is explicitly defined as a custom container
+- the backend runtime is explicitly defined as a custom container
 - that container installs `pwsh` and `ExchangeOnlineManagement`
 - Exchange certificate material is expected from Key Vault secrets
 
@@ -49,4 +49,4 @@ Expected non-secret app settings:
 - `DEFAULT_TIMEZONE`
 - `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
 
-The removed container-app backend is no longer part of this repository.
+This directory remains named `function-app/` because it contains the Azure Functions project that runs inside the Container App.

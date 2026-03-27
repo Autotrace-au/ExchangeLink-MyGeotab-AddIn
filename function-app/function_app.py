@@ -490,7 +490,7 @@ def exchange_certificate_material() -> tuple[str, str]:
 def exchange_sync_settings() -> dict[str, Any]:
     pwsh_path = shutil.which("pwsh")
     if not pwsh_path:
-        raise RuntimeError("pwsh is not available in the Function App runtime")
+        raise RuntimeError("pwsh is not available in the backend runtime")
 
     if not EXCHANGE_SYNC_SCRIPT.exists():
         raise RuntimeError("exchange_sync.ps1 is missing")

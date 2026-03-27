@@ -6,9 +6,9 @@ The active product model is:
 
 - one customer MyGeotab database
 - one customer Microsoft 365 tenant
-- one Azure Function App backend
+- one Azure Container Apps backend
 - one shared MyGeotab Add-In build
-- customer-specific Function App URL entered into the Add-In
+- customer-specific backend URL entered into the Add-In
 
 FleetBridge does not create equipment mailboxes. Customer administrators create them manually in Exchange Online using the MyGeotab serial, keep them hidden initially, and FleetBridge reconciles them during sync.
 
@@ -16,14 +16,14 @@ FleetBridge does not create equipment mailboxes. Customer administrators create 
 
 - The Add-In manages FleetBridge custom properties on MyGeotab assets.
 - The Add-In starts Exchange sync jobs and polls status asynchronously.
-- The Function App updates MyGeotab device custom properties.
-- The Function App reads MyGeotab devices, finds equipment mailboxes by serial, updates mailbox settings, and updates display name from the MyGeotab vehicle name.
-- On first successful sync, the Function App can make previously hidden mailboxes visible.
+- The backend updates MyGeotab device custom properties.
+- The backend reads MyGeotab devices, finds equipment mailboxes by serial, updates mailbox settings, and updates display name from the MyGeotab vehicle name.
+- On first successful sync, the backend can make previously hidden mailboxes visible.
 
 ## Repository Layout
 
 - `mygeotab-addin/` active Add-In source
-- `function-app/` Azure Function App code and Docker runtime
+- `function-app/` Azure Functions code and Docker runtime
 - `infra/` Bicep infrastructure and environment parameter files
 - `docs/` active architecture and deployment documentation
 - `scripts/` helper scripts for deployment bootstrap and operations
@@ -34,12 +34,12 @@ FleetBridge does not create equipment mailboxes. Customer administrators create 
 The intended deployment path is GitHub Actions driven and configuration based:
 
 1. Azure resources are provisioned from `infra/`.
-2. The Function App container image is built and deployed.
+2. The backend container image is built and deployed.
 3. Key Vault secrets are seeded from GitHub secrets.
 4. Health and sync smoke tests run.
-5. The customer enters their Function App base URL into the shared Add-In.
+5. The customer enters their backend base URL into the shared Add-In.
 
-The current baseline uses a Dedicated Linux App Service plan for Azure Functions to reduce monthly hosting cost while keeping support for the custom container runtime.
+The current baseline uses an Azure Container Apps Consumption deployment to reduce monthly hosting cost while keeping support for the custom container runtime.
 
 Primary workflow:
 
@@ -63,7 +63,7 @@ If FleetBridge is being deployed into a client tenant, collect all of the follow
   - Storage Account
   - Key Vault
   - Azure Container Registry
-  - Linux Function App on a Dedicated App Service plan
+  - Azure Container Apps managed environment and container app
   - managed identity and required role assignments
 
 ### Microsoft 365 / Entra / Exchange
@@ -118,9 +118,9 @@ If FleetBridge is being deployed into a client tenant, collect all of the follow
 The active system now supports:
 
 - async Exchange sync jobs with status polling
-- MyGeotab device property updates from the Add-In through the Function App
+- MyGeotab device property updates from the Add-In through the backend
 - serial-based mailbox lookup
 - vehicle-name-to-display-name updates
 - GitHub Actions based Azure deployment
 
-The repository no longer includes the retired SaaS and container-app implementation. The active deployment path is the single-tenant Function App model described above.
+The repository no longer includes the retired SaaS or dedicated App Service deployment. The active deployment path is the single-tenant Azure Container Apps model described above.

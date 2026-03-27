@@ -474,20 +474,20 @@
                 <h2>Sync to Exchange Online</h2>
                 <div id="syncStatusMessage" class="status-message status-info">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                    <span>Save your FleetBridge Function App URL to connect this Add-In to your tenant-specific backend.</span>
+                    <span>Save your FleetBridge backend URL to connect this Add-In to your tenant-specific backend.</span>
                 </div>
             </section>
 
             <section class="properties-section">
-                <h2>Function App Configuration</h2>
+                <h2>Backend Configuration</h2>
                 <p class="info-text">
-                    Enter the base URL for your tenant's FleetBridge Azure Function App. This shared Add-In build is reused across customers, so each customer saves their own backend URL here.
+                    Enter the base URL for your tenant's FleetBridge Azure Container App. This shared Add-In build is reused across customers, so each customer saves their own backend URL here.
                 </p>
                 
                 <div style="margin-bottom: 20px; padding: 14px; background-color: #dbeafe; border-left: 4px solid #3b82f6; border-radius: 6px; font-size: 13px; color: #1e3a8a;">
-                    <strong>Use the Function App base URL only:</strong>
+                    <strong>Use the backend base URL only:</strong>
                     <ul style="margin: 8px 0 0 20px; padding: 0;">
-                        <li><strong>Example:</strong> https://fleetbridge-yourtenant.azurewebsites.net</li>
+                        <li><strong>Example:</strong> https://fleetbridge-yourtenant.azurecontainerapps.io</li>
                         <li>Do not include <strong>/api/health</strong> or any other path.</li>
                     </ul>
                 </div>
@@ -500,15 +500,15 @@
                             </svg>
                         </div>
                         <div>
-                            <h3>Function App URL</h3>
+                            <h3>Backend URL</h3>
                             <p>The FleetBridge backend URL for this tenant</p>
                         </div>
                     </div>
-                    <input type="text" id="functionAppUrl" placeholder="https://your-function-app.azurewebsites.net" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
+                    <input type="text" id="backendUrl" placeholder="https://your-backend.azurecontainerapps.io" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
                 </div>
 
                 <div style="margin-top: 20px; display: flex; gap: 12px;">
-                    <button id="saveAzureFunctionConfigBtn" class="btn btn-primary">
+                    <button id="saveBackendConfigBtn" class="btn btn-primary">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"></path>
                             <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -516,7 +516,7 @@
                         </svg>
                         Save Configuration
                     </button>
-                    <button id="testAzureFunctionBtn" class="btn btn-secondary">
+                    <button id="testBackendBtn" class="btn btn-secondary">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
@@ -524,13 +524,13 @@
                     </button>
                 </div>
 
-                <div id="azureFunctionTestResult" style="margin-top: 16px; display: none;"></div>
+                <div id="backendTestResult" style="margin-top: 16px; display: none;"></div>
             </section>
 
             <section class="properties-section">
                 <h2>Backend Connection Notes</h2>
                 <p class="info-text">
-                    Exchange Online access is handled entirely by the backend. Once this Add-In is connected to the correct Function App, sync requests use the server-side Exchange configuration for that tenant.
+                    Exchange Online access is handled entirely by the backend. Once this Add-In is connected to the correct backend, sync requests use the server-side Exchange configuration for that tenant.
                 </p>
 
                 <div id="exchangeConnectionStatus" style="padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--border-color);">
@@ -540,7 +540,7 @@
                             <line x1="12" y1="16" x2="12" y2="12"></line>
                             <line x1="12" y1="8" x2="12.01" y2="8"></line>
                         </svg>
-                        <span id="exchangeConnectionText">Save and test the Function App URL above, then use Trigger Sync Now.</span>
+                        <span id="exchangeConnectionText">Save and test the backend URL above, then use Trigger Sync Now.</span>
                     </div>
                 </div>
             </section>
@@ -783,10 +783,10 @@
             let api;
             let state;
 
-            const DEFAULT_FLEETBRIDGE_FUNCTION_URL = '';
+            const DEFAULT_FLEETBRIDGE_BACKEND_URL = '';
             const FLEETBRIDGE_ADDIN_DATA_ID = 'P6B8oQ6wQ5i2t1h5n3kJlg';
             const FLEETBRIDGE_SETTINGS_KEY = 'settings';
-            const FUNCTION_URL_STORAGE_KEY = 'fleetSyncFunctionUrl';
+            const BACKEND_URL_STORAGE_KEY = 'fleetSyncBackendUrl';
             const GROUPS_STORAGE_KEY = 'fleetSyncGroups';
 
             const REQUIRED_PROPERTIES = [
@@ -859,8 +859,8 @@
                 const saveEditGroupBtn = document.getElementById('saveEditGroupBtn');
                 const confirmAssignGroupBtn = document.getElementById('confirmAssignGroupBtn');
                 const saveAllAssetsBtn = document.getElementById('saveAllAssetsBtn');
-                const saveAzureFunctionConfigBtn = document.getElementById('saveAzureFunctionConfigBtn');
-                const testAzureFunctionBtn = document.getElementById('testAzureFunctionBtn');
+                const saveBackendConfigBtn = document.getElementById('saveBackendConfigBtn');
+                const testBackendBtn = document.getElementById('testBackendBtn');
                 const triggerSyncBtn = document.getElementById('triggerSyncBtn');
 
                 if (checkBtn) checkBtn.addEventListener('click', checkProperties);
@@ -872,8 +872,8 @@
                 if (saveEditGroupBtn) saveEditGroupBtn.addEventListener('click', saveEditGroup);
                 if (confirmAssignGroupBtn) confirmAssignGroupBtn.addEventListener('click', assignAssetToGroup);
                 if (saveAllAssetsBtn) saveAllAssetsBtn.addEventListener('click', saveAllAssets);
-                if (saveAzureFunctionConfigBtn) saveAzureFunctionConfigBtn.addEventListener('click', saveAzureFunctionConfig);
-                if (testAzureFunctionBtn) testAzureFunctionBtn.addEventListener('click', testAzureFunctionConnection);
+                if (saveBackendConfigBtn) saveBackendConfigBtn.addEventListener('click', saveBackendConfig);
+                if (testBackendBtn) testBackendBtn.addEventListener('click', testBackendConnection);
                 if (triggerSyncBtn) triggerSyncBtn.addEventListener('click', triggerSync);
 
                 // Tab switching
@@ -882,7 +882,7 @@
                 });
 
                 // Load saved configuration on init
-                loadAzureFunctionConfig();
+                loadBackendConfig();
             }
 
             function switchTab(tabName) {
@@ -1801,9 +1801,9 @@
             /**
              * Update device properties via the Azure backend to avoid MyGeotab JS SDK property update issues.
              * This avoids the JsonSerializerException issues with the JavaScript SDK.
-             * The tenant-specific Function App URL is loaded from localStorage.
+             * The tenant-specific backend URL is loaded from localStorage.
              */
-            function normalizeFunctionBaseUrl(url) {
+            function normalizeBackendBaseUrl(url) {
                 let normalized = (url || '').trim();
                 normalized = normalized.replace(/\/$/, '');
                 normalized = normalized.replace(/\/api\/health$/i, '');
@@ -1830,13 +1830,17 @@
                 }
 
                 return {
-                    functionAppUrl: normalizeFunctionBaseUrl(localStorage.getItem(FUNCTION_URL_STORAGE_KEY) || DEFAULT_FLEETBRIDGE_FUNCTION_URL),
+                    backendUrl: normalizeBackendBaseUrl(
+                        localStorage.getItem(BACKEND_URL_STORAGE_KEY) ||
+                        localStorage.getItem('fleetSyncFunctionUrl') ||
+                        DEFAULT_FLEETBRIDGE_BACKEND_URL
+                    ),
                     assetGroups: Array.isArray(groups) ? groups : []
                 };
             }
 
             function writeLocalSettings(settings) {
-                localStorage.setItem(FUNCTION_URL_STORAGE_KEY, normalizeFunctionBaseUrl(settings.functionAppUrl || ''));
+                localStorage.setItem(BACKEND_URL_STORAGE_KEY, normalizeBackendBaseUrl(settings.backendUrl || ''));
                 localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(settings.assetGroups || []));
             }
 
@@ -1845,7 +1849,7 @@
                 assetGroups = localSettings.assetGroups;
 
                 if (!api) {
-                    loadAzureFunctionConfig();
+                    loadBackendConfig();
                     return localSettings;
                 }
 
@@ -1859,14 +1863,18 @@
 
                     const settingsRecord = (records || []).find(record => record.details && record.details.key === FLEETBRIDGE_SETTINGS_KEY);
                     if (!settingsRecord) {
-                        loadAzureFunctionConfig();
+                        loadBackendConfig();
                         return localSettings;
                     }
 
                     cachedSettingsRecordId = settingsRecord.id || null;
 
                     const persistedSettings = {
-                        functionAppUrl: normalizeFunctionBaseUrl(settingsRecord.details.functionAppUrl || localSettings.functionAppUrl),
+                        backendUrl: normalizeBackendBaseUrl(
+                            settingsRecord.details.backendUrl ||
+                            settingsRecord.details.functionAppUrl ||
+                            localSettings.backendUrl
+                        ),
                         assetGroups: []
                     };
 
@@ -1884,18 +1892,18 @@
 
                     writeLocalSettings(persistedSettings);
                     assetGroups = persistedSettings.assetGroups;
-                    loadAzureFunctionConfig();
+                    loadBackendConfig();
                     return persistedSettings;
                 } catch (error) {
                     console.warn('AddInData settings load failed, using local storage fallback:', error);
-                    loadAzureFunctionConfig();
+                    loadBackendConfig();
                     return localSettings;
                 }
             }
 
             async function persistSettings() {
                 const settings = {
-                    functionAppUrl: getConfiguredFunctionUrl(),
+                    backendUrl: getConfiguredBackendUrl(),
                     assetGroups: assetGroups
                 };
 
@@ -1909,7 +1917,7 @@
                     addInId: FLEETBRIDGE_ADDIN_DATA_ID,
                     details: {
                         key: FLEETBRIDGE_SETTINGS_KEY,
-                        functionAppUrl: settings.functionAppUrl,
+                        backendUrl: settings.backendUrl,
                         assetGroupsJson: JSON.stringify(settings.assetGroups || [])
                     }
                 };
@@ -1935,9 +1943,9 @@
                 }
             }
 
-            function getConfiguredFunctionUrl() {
-                const savedUrl = localStorage.getItem(FUNCTION_URL_STORAGE_KEY) || DEFAULT_FLEETBRIDGE_FUNCTION_URL;
-                return normalizeFunctionBaseUrl(savedUrl);
+            function getConfiguredBackendUrl() {
+                const savedUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_FLEETBRIDGE_BACKEND_URL;
+                return normalizeBackendBaseUrl(savedUrl);
             }
 
             async function updateDeviceProperties(deviceId, properties) {
@@ -1945,9 +1953,9 @@
                 console.log('Device ID:', deviceId);
                 console.log('Properties to update:', JSON.stringify(properties, null, 2));
 
-                const azureFunctionUrl = getConfiguredFunctionUrl();
-                if (!azureFunctionUrl) {
-                    throw new Error('Function App URL not configured. Please configure it in the "Sync to Exchange" tab.');
+                const backendUrl = getConfiguredBackendUrl();
+                if (!backendUrl) {
+                    throw new Error('Backend URL not configured. Please configure it in the "Sync to Exchange" tab.');
                 }
 
                 try {
@@ -1955,7 +1963,7 @@
                         deviceId: deviceId,
                         properties: properties
                     };
-                    const endpoint = `${azureFunctionUrl}/api/update-device-properties`;
+                    const endpoint = `${backendUrl}/api/update-device-properties`;
                     console.log('Calling endpoint:', endpoint);
 
                     const response = await fetch(endpoint, {
@@ -1972,7 +1980,7 @@
                         throw new Error(result.error || 'Failed to update device properties');
                     }
 
-                    console.log('Azure Function response:', result);
+                    console.log('Backend response:', result);
                     console.log('=== updateDeviceProperties SUCCESS ===');
                     return true;
 
@@ -2001,42 +2009,42 @@
             }
 
             /**
-             * Save Azure Function configuration to localStorage
+             * Save backend configuration to localStorage
              */
-            async function saveAzureFunctionConfig() {
-                const functionUrlInput = document.getElementById('functionAppUrl');
-                const functionUrl = normalizeFunctionBaseUrl(functionUrlInput.value);
+            async function saveBackendConfig() {
+                const backendUrlInput = document.getElementById('backendUrl');
+                const backendUrl = normalizeBackendBaseUrl(backendUrlInput.value);
 
-                if (!functionUrl) {
-                    showAzureFunctionResult('Please enter your Function App URL.', 'error');
+                if (!backendUrl) {
+                    showBackendResult('Please enter your Backend URL.', 'error');
                     return;
                 }
 
                 try {
-                    const parsedUrl = new URL(functionUrl);
+                    const parsedUrl = new URL(backendUrl);
                     if (parsedUrl.protocol !== 'https:') {
-                        throw new Error('Function App URL must use HTTPS.');
+                        throw new Error('Backend URL must use HTTPS.');
                     }
                 } catch (error) {
-                    showAzureFunctionResult(error.message || 'Please enter a valid Function App URL.', 'error');
+                    showBackendResult(error.message || 'Please enter a valid Backend URL.', 'error');
                     return;
                 }
 
-                localStorage.setItem(FUNCTION_URL_STORAGE_KEY, functionUrl);
+                localStorage.setItem(BACKEND_URL_STORAGE_KEY, backendUrl);
                 await persistSettings();
-                showAzureFunctionResult('Configuration saved successfully.', 'success');
+                showBackendResult('Configuration saved successfully.', 'success');
                 showExchangeStatus('connected');
             }
 
             /**
-             * Load Azure Function configuration from localStorage
+             * Load backend configuration from localStorage
              */
-            function loadAzureFunctionConfig() {
-                const functionUrlInput = document.getElementById('functionAppUrl');
-                const savedFunctionUrl = getConfiguredFunctionUrl();
+            function loadBackendConfig() {
+                const backendUrlInput = document.getElementById('backendUrl');
+                const savedBackendUrl = getConfiguredBackendUrl();
 
-                if (savedFunctionUrl && functionUrlInput) {
-                    functionUrlInput.value = savedFunctionUrl;
+                if (savedBackendUrl && backendUrlInput) {
+                    backendUrlInput.value = savedBackendUrl;
                     showExchangeStatus('connected');
                 } else {
                     showExchangeStatus('not_configured');
@@ -2044,20 +2052,20 @@
             }
 
             /**
-             * Test Azure Function connection
+             * Test backend connection
              */
-            async function testAzureFunctionConnection() {
-                const functionUrl = normalizeFunctionBaseUrl(document.getElementById('functionAppUrl').value);
+            async function testBackendConnection() {
+                const backendUrl = normalizeBackendBaseUrl(document.getElementById('backendUrl').value);
 
-                if (!functionUrl) {
-                    showAzureFunctionResult('Please enter your Function App URL before testing.', 'error');
+                if (!backendUrl) {
+                    showBackendResult('Please enter your Backend URL before testing.', 'error');
                     return;
                 }
 
                 try {
-                    showAzureFunctionResult('Testing connection...', 'info');
+                    showBackendResult('Testing connection...', 'info');
 
-                    const response = await fetch(`${functionUrl}/api/health`, {
+                    const response = await fetch(`${backendUrl}/api/health`, {
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json'
@@ -2066,26 +2074,26 @@
 
                     if (response.ok) {
                         const data = await response.json();
-                        showAzureFunctionResult(
+                        showBackendResult(
                             `Connection successful. Service status: ${data.status}.`,
                             'success'
                         );
                         showExchangeStatus('connected');
                     } else {
-                        showAzureFunctionResult(`Connection failed: ${response.status} ${response.statusText}`, 'error');
+                        showBackendResult(`Connection failed: ${response.status} ${response.statusText}`, 'error');
                         showExchangeStatus('error', { error: `${response.status} ${response.statusText}` });
                     }
                 } catch (error) {
-                    showAzureFunctionResult(`Connection failed: ${error.message}`, 'error');
+                    showBackendResult(`Connection failed: ${error.message}`, 'error');
                     showExchangeStatus('error', { error: error.message });
                 }
             }
 
             /**
-             * Show Azure Function test result
+             * Show backend test result
              */
-            function showAzureFunctionResult(message, type) {
-                const resultDiv = document.getElementById('azureFunctionTestResult');
+            function showBackendResult(message, type) {
+                const resultDiv = document.getElementById('backendTestResult');
                 resultDiv.style.display = 'block';
                 resultDiv.className = `status-message status-${type}`;
 
@@ -2191,11 +2199,11 @@
                 const syncSummary = document.getElementById('syncSummary');
                 const maxDevicesInput = document.getElementById('maxDevicesLimit');
 
-                const functionUrl = getConfiguredFunctionUrl();
+                const backendUrl = getConfiguredBackendUrl();
                 const maxDevices = maxDevicesInput ? parseInt(maxDevicesInput.value) || 0 : 0;
 
-                if (!functionUrl) {
-                    updateSyncStatus('Please configure and save the Function App URL first.', 'error');
+                if (!backendUrl) {
+                    updateSyncStatus('Please configure and save the Backend URL first.', 'error');
                     return;
                 }
 
@@ -2205,7 +2213,7 @@
                     syncResultContainer.style.display = 'none';
                     updateSyncStatus('Queueing sync job...', 'info');
 
-                    const endpoint = `${functionUrl}/api/sync-to-exchange`;
+                    const endpoint = `${backendUrl}/api/sync-to-exchange`;
                     const requestBody = {};
 
                     if (maxDevices > 0) {
@@ -2247,7 +2255,7 @@
                     syncSummary.innerHTML = '<div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">Waiting for background sync job to start...</div>';
                     syncResult.textContent = JSON.stringify({ jobId: result.jobId, statusUrl: result.statusUrl }, null, 2);
 
-                    const finalStatus = await pollSyncJob(functionUrl, result.jobId, updateSyncStatus, syncSummary, syncResult);
+                    const finalStatus = await pollSyncJob(backendUrl, result.jobId, updateSyncStatus, syncSummary, syncResult);
                     renderSyncResult(finalStatus, syncSummary, syncResult, syncResultContainer);
 
                 } catch (error) {
@@ -2255,7 +2263,7 @@
                     updateSyncStatus(`Sync failed: ${error.message}`, 'error');
                     
                     syncSummary.innerHTML = '';
-                    syncResult.textContent = `Error: ${error.message}\n\nPlease check:\n1. Function App URL is correct\n2. Function App is deployed and healthy\n3. Backend Exchange configuration is valid\n4. Key Vault secrets are present\n5. Network connectivity to Azure Functions\n\nSee browser console for more details.`;
+                    syncResult.textContent = `Error: ${error.message}\n\nPlease check:\n1. Backend URL is correct\n2. Backend is deployed and healthy\n3. Backend Exchange configuration is valid\n4. Key Vault secrets are present\n5. Network connectivity to Azure Container Apps\n\nSee browser console for more details.`;
                     syncResultContainer.style.display = 'block';
                     renderSyncProgress({
                         currentStage: 'Failed',
@@ -2438,7 +2446,7 @@
                         statusDiv.style.borderColor = '#10b981';
                         statusDiv.style.color = '#065f46';
                         statusText.innerHTML = `<strong>✅ Backend Ready</strong><br>
-                            <span style="font-size: 12px;">This Add-In is connected to a tenant-specific FleetBridge Function App. Trigger a sync to validate mailbox updates.</span>`;
+                            <span style="font-size: 12px;">This Add-In is connected to a tenant-specific FleetBridge backend. Trigger a sync to validate mailbox updates.</span>`;
                         break;
                         
                     case 'not_configured':
@@ -2446,7 +2454,7 @@
                         statusDiv.style.borderColor = '#3b82f6';
                         statusDiv.style.color = '#1e3a8a';
                         statusText.innerHTML = `<strong>ℹ️ Setup Required</strong><br>
-                            <span style="font-size: 12px;">Save your tenant's Function App URL above first.</span>`;
+                            <span style="font-size: 12px;">Save your tenant's backend URL above first.</span>`;
                         break;
                         
                     case 'error':

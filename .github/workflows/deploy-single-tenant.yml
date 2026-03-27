@@ -1,4 +1,4 @@
-name: Deploy Single-Tenant Function App
+name: Deploy Single-Tenant Container App
 
 "on":
   workflow_dispatch:
@@ -38,10 +38,10 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy Function App Infrastructure and Image
+      - name: Deploy Container App Infrastructure and Image
         env:
           FUNCTION_IMAGE_TAG_OVERRIDE: ${{ github.sha }}
-        run: bash ./scripts/deploy-function-app.sh "${{ inputs.resource_group }}" "${{ inputs.parameters_file }}"
+        run: bash ./scripts/deploy-container-app.sh "${{ inputs.resource_group }}" "${{ inputs.parameters_file }}"
 
       - name: Decode Exchange Certificate
         env:
@@ -74,21 +74,23 @@ jobs:
 
       - name: Smoke Test Health
         run: |
-          FUNCTION_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["functionAppName"]["value"])' "${{ inputs.parameters_file }}")"
-          curl -fsS "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/health"
+          CONTAINER_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["containerAppName"]["value"])' "${{ inputs.parameters_file }}")"
+          CONTAINER_APP_FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${{ inputs.resource_group }}" --query properties.configuration.ingress.fqdn -o tsv)"
+          curl -fsS "https://${CONTAINER_APP_FQDN}/api/health"
 
       - name: Smoke Test Sync
         if: ${{ inputs.run_smoke_sync }}
         run: |
-          FUNCTION_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["functionAppName"]["value"])' "${{ inputs.parameters_file }}")"
+          CONTAINER_APP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["parameters"]["containerAppName"]["value"])' "${{ inputs.parameters_file }}")"
+          CONTAINER_APP_FQDN="$(az containerapp show --name "${CONTAINER_APP_NAME}" --resource-group "${{ inputs.resource_group }}" --query properties.configuration.ingress.fqdn -o tsv)"
           JOB_ID="$(curl -fsS -X POST \
-            "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-to-exchange" \
+            "https://${CONTAINER_APP_FQDN}/api/sync-to-exchange" \
             -H 'Content-Type: application/json' \
             -d '{"maxDevices":1}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')"
           echo "Queued sync job: ${JOB_ID}"
           POLL_FAILURES=0
           for attempt in $(seq 1 60); do
-            if ! STATUS_JSON="$(curl -fsS --max-time 20 "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/sync-status?jobId=${JOB_ID}")"; then
+            if ! STATUS_JSON="$(curl -fsS --max-time 20 "https://${CONTAINER_APP_FQDN}/api/sync-status?jobId=${JOB_ID}")"; then
               POLL_FAILURES=$((POLL_FAILURES + 1))
               echo "Sync status poll failed (${attempt}/60), consecutive failures: ${POLL_FAILURES}"
               if [ "${POLL_FAILURES}" -ge 6 ]; then

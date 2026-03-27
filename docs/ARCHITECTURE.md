@@ -4,7 +4,7 @@
 
 FleetBridge is designed as a single-tenant integration for one MyGeotab database and one Microsoft 365 tenant.
 
-This is not currently a SaaS multi-tenant platform. Each deployment is customer-specific, but the MyGeotab Add-In codebase is shared. The customer connects the shared Add-In to their own backend by entering their Function App URL.
+This is not currently a SaaS multi-tenant platform. Each deployment is customer-specific, but the MyGeotab Add-In codebase is shared. The customer connects the shared Add-In to their own backend by entering their backend URL.
 
 ## Active Components
 
@@ -14,13 +14,13 @@ The Add-In runs inside MyGeotab and is responsible for:
 
 - creating and checking FleetBridge custom property definitions
 - editing FleetBridge booking properties on assets
-- saving the customer Function App URL
+- saving the customer backend URL
 - starting Exchange sync jobs
 - polling sync job status and rendering results
 
-### Azure Function App
+### Azure Container App
 
-The Function App is the backend control plane. It is responsible for:
+The backend is the backend control plane. It is responsible for:
 
 - health reporting
 - updating MyGeotab device custom properties
@@ -29,7 +29,7 @@ The Function App is the backend control plane. It is responsible for:
 - reading MyGeotab devices
 - reconciling Exchange Online mailbox settings
 
-The Function App is deployed as a custom Linux container so the runtime includes:
+The backend is deployed as a custom Linux container so the runtime includes:
 
 - Python
 - PowerShell
@@ -82,7 +82,7 @@ The serial is the stable system identifier. The vehicle name is a mutable label 
 Sync is asynchronous.
 
 1. The Add-In calls `POST /api/sync-to-exchange`.
-2. The Function App creates a job record and enqueues work.
+2. The backend creates a job record and enqueues work.
 3. A queue-triggered worker processes the job in the background.
 4. The Add-In polls `GET /api/sync-status?jobId=...`.
 5. Final per-device results are read from persisted job state.
@@ -104,13 +104,13 @@ FleetBridge stores booking-related configuration as MyGeotab device custom prope
 - Maximum Booking Duration (Hours)
 - Mailbox Language
 
-The Add-In edits these values and the Function App persists them back to MyGeotab.
+The Add-In edits these values and the backend persists them back to MyGeotab.
 
 ## Configuration Boundaries
 
 ### Non-secret configuration
 
-Non-secret configuration belongs in Bicep parameters and Function App settings, for example:
+Non-secret configuration belongs in Bicep parameters and backend settings, for example:
 
 - Azure region
 - equipment domain
