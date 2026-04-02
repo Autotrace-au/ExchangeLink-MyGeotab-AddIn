@@ -27,6 +27,12 @@ SYNC_QUEUE_NAME = "fleetbridge-sync-jobs"
 SYNC_JOBS_PARTITION_KEY = "syncjobs"
 MAX_RESULT_STORAGE_CHARS = 800_000
 PROGRESS_LINE_PREFIX = "__FLEETBRIDGE_PROGRESS__"
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+}
 
 PROPERTY_NAME_MAP = {
     "Enable Equipment Booking": "bookable",
@@ -90,12 +96,21 @@ def chunked(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
-def json_response(payload: dict[str, Any], status_code: int = 200) -> func.HttpResponse:
+def json_response(
+    payload: dict[str, Any],
+    status_code: int = 200,
+    headers: dict[str, str] | None = None,
+) -> func.HttpResponse:
     return func.HttpResponse(
         body=json.dumps(payload),
         status_code=status_code,
         mimetype="application/json",
+        headers={**CORS_HEADERS, **(headers or {})},
     )
+
+
+def cors_preflight_response() -> func.HttpResponse:
+    return func.HttpResponse(status_code=204, headers=CORS_HEADERS)
 
 
 def parse_json(req: func.HttpRequest) -> dict[str, Any]:
@@ -858,8 +873,11 @@ def service_config_summary() -> dict[str, Any]:
     }
 
 
-@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="health", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def health(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return cors_preflight_response()
+
     return json_response(
         {
             "status": "healthy",
@@ -870,8 +888,11 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
-@app.route(route="update-device-properties", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="update-device-properties", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return cors_preflight_response()
+
     body = parse_json(req)
     device_id = body.get("deviceId")
     properties = body.get("properties")
@@ -932,8 +953,11 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
-@app.route(route="sync-to-exchange", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="sync-to-exchange", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return cors_preflight_response()
+
     body = parse_json(req)
     max_devices = body.get("maxDevices", 0)
 
@@ -1008,8 +1032,11 @@ def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
-@app.route(route="sync-status", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="sync-status", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_status(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return cors_preflight_response()
+
     job_id = (req.params.get("jobId") or "").strip()
     if not job_id:
         return json_response(
