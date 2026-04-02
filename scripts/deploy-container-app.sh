@@ -57,7 +57,11 @@ az group create \
   >/dev/null
 
 deploy_infra() {
+  local deployment_name="$1"
+  local deploy_container_app="$2"
+
   az deployment group create \
+    --name "${deployment_name}" \
     --resource-group "${RESOURCE_GROUP}" \
     --template-file "${REPO_ROOT}/infra/main.bicep" \
     --parameters \
@@ -79,6 +83,7 @@ deploy_infra() {
       defaultTimezone="${DEFAULT_TIMEZONE}" \
       myGeotabServer="${MYGEOTAB_SERVER}" \
       makeMailboxVisibleOnFirstSync="${MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC}" \
+      deployContainerApp="${deploy_container_app}" \
       myGeotabDatabase="${MYGEOTAB_DATABASE}" \
       myGeotabUsername="${MYGEOTAB_USERNAME}" \
       myGeotabPassword="${MYGEOTAB_PASSWORD}" \
@@ -87,8 +92,8 @@ deploy_infra() {
     >/dev/null
 }
 
-echo "Deploying Azure resources to resource group: ${RESOURCE_GROUP}"
-deploy_infra
+echo "Deploying foundation Azure resources to resource group: ${RESOURCE_GROUP}"
+deploy_infra foundation false
 
 ACR_LOGIN_SERVER="$(az acr show --name "${CONTAINER_REGISTRY_NAME}" --resource-group "${RESOURCE_GROUP}" --query loginServer -o tsv)"
 
@@ -98,8 +103,8 @@ az acr build \
   --image "${FUNCTION_IMAGE_REPOSITORY}:${FUNCTION_IMAGE_TAG}" \
   "${REPO_ROOT}/function-app"
 
-echo "Re-deploying Container App with image tag: ${FUNCTION_IMAGE_TAG}"
-deploy_infra
+echo "Deploying Container App with image tag: ${FUNCTION_IMAGE_TAG}"
+deploy_infra app true
 
 echo "Waiting for Container App ingress FQDN"
 for attempt in $(seq 1 30); do

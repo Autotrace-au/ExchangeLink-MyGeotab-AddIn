@@ -18,6 +18,9 @@ param containerAppName string = '${appName}-${environmentName}-app'
 @description('Container Apps managed environment name.')
 param containerAppEnvironmentName string = '${appName}-${environmentName}-env'
 
+@description('User-assigned managed identity name used for Azure Container Registry pulls.')
+param containerRegistryPullIdentityName string = '${appName}-${environmentName}-pull'
+
 @description('Azure Container Registry name.')
 param containerRegistryName string
 
@@ -53,6 +56,9 @@ param myGeotabServer string = 'my.geotab.com'
 
 @description('Whether first successful sync should make pre-created hidden mailboxes visible.')
 param makeMailboxVisibleOnFirstSync bool = true
+
+@description('Whether to deploy the Container App resource.')
+param deployContainerApp bool = true
 
 @secure()
 @description('MyGeotab database name.')
@@ -106,16 +112,40 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2022-03-01' = {
   properties: {}
 }
 
+resource containerRegistryPullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: containerRegistryPullIdentityName
+  location: location
+}
+
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 var containerImage = '${containerRegistry.properties.loginServer}/${functionImageRepository}:${functionImageTag}'
 
-resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, containerRegistryPullIdentity.id, 'AcrPull')
+  scope: containerRegistry
+  properties: {
+    principalId: containerRegistryPullIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+    )
+  }
+}
+
+resource containerApp 'Microsoft.App/containerApps@2022-03-01' = if (deployContainerApp) {
   name: containerAppName
   location: location
   kind: 'functionapp'
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${containerRegistryPullIdentity.id}': {}
+    }
   }
+  dependsOn: [
+    acrPullRole
+  ]
   properties: {
     managedEnvironmentId: managedEnvironment.id
     configuration: {
@@ -129,7 +159,7 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
       registries: [
         {
           server: containerRegistry.properties.loginServer
-          identity: 'system'
+          identity: containerRegistryPullIdentity.id
         }
       ]
       secrets: [
@@ -240,20 +270,7 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
   }
 }
 
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, containerApp.id, 'AcrPull')
-  scope: containerRegistry
-  properties: {
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-    )
-  }
-}
-
-output containerAppName string = containerApp.name
-output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output containerAppName string = deployContainerApp ? containerApp!.name : ''
+output containerAppUrl string = deployContainerApp ? 'https://${containerApp!.properties.configuration.ingress.fqdn}' : ''
 output containerRegistryLoginServer string = containerRegistry.properties.loginServer
 output containerImage string = containerImage
