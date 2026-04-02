@@ -1,6 +1,4 @@
 azure-functions
 azure-data-tables
 azure-storage-queue
-azure-identity
-azure-keyvault-secrets
 mygeotab

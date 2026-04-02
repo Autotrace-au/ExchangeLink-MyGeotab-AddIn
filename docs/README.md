@@ -1,6 +1,6 @@
 # Current Docs
 
-These documents describe the active single-tenant Function App direction.
+These documents describe the active single-tenant Azure Container Apps fork-and-deploy model.
 
 - `ARCHITECTURE.md` target architecture and responsibilities
 - `DEPLOYMENT.md` deployment model and configuration boundaries

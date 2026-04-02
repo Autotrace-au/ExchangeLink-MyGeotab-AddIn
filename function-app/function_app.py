@@ -8,7 +8,6 @@ import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -16,8 +15,6 @@ from typing import Any
 import azure.functions as func
 from azure.data.tables import TableServiceClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError
-from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
 from azure.storage.queue import QueueClient
 from mygeotab import API
 
@@ -107,24 +104,6 @@ def parse_json(req: func.HttpRequest) -> dict[str, Any]:
     except ValueError:
         body = {}
     return body if isinstance(body, dict) else {}
-
-
-@lru_cache(maxsize=1)
-def get_secret_client() -> SecretClient | None:
-    key_vault_url = os.getenv("KEY_VAULT_URL")
-    if not key_vault_url:
-        return None
-    return SecretClient(vault_url=key_vault_url, credential=DefaultAzureCredential())
-
-
-@lru_cache(maxsize=32)
-def get_secret_value(secret_name: str | None) -> str:
-    if not secret_name:
-        return ""
-    client = get_secret_client()
-    if not client:
-        return ""
-    return client.get_secret(secret_name).value
 
 
 def get_table_client():
@@ -265,18 +244,13 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def mygeotab_credentials(body: dict[str, Any]) -> tuple[str, str, str, str]:
-    database = body.get("database") or os.getenv("MYGEOTAB_DATABASE", "") or get_secret_value(os.getenv("MYGEOTAB_DATABASE_SECRET_NAME"))
-    username = body.get("username") or os.getenv("MYGEOTAB_USERNAME", "") or get_secret_value(os.getenv("MYGEOTAB_USERNAME_SECRET_NAME"))
-    server = body.get("server") or os.getenv("MYGEOTAB_SERVER", "") or get_secret_value(os.getenv("MYGEOTAB_SERVER_SECRET_NAME")) or "my.geotab.com"
-
-    password = body.get("password", "")
-    if password:
-        return database, username, password, server
-
-    password_secret_name = os.getenv("MYGEOTAB_PASSWORD_SECRET_NAME")
-    password = get_secret_value(password_secret_name)
-    return database, username, password, server
+def mygeotab_credentials() -> tuple[str, str, str, str]:
+    return (
+        os.getenv("MYGEOTAB_DATABASE", "").strip(),
+        os.getenv("MYGEOTAB_USERNAME", "").strip(),
+        os.getenv("MYGEOTAB_PASSWORD", ""),
+        os.getenv("MYGEOTAB_SERVER", "my.geotab.com").strip() or "my.geotab.com",
+    )
 
 
 def parse_bool(value: Any, default: bool = False) -> bool:
@@ -409,7 +383,7 @@ def build_device_custom_property_updates(
 
 
 def update_mygeotab_device_properties(device_identifier: str, properties: dict[str, Any]) -> dict[str, Any]:
-    database, username, password, server = mygeotab_credentials({})
+    database, username, password, server = mygeotab_credentials()
     missing_credentials = [
         name
         for name, value in (
@@ -481,21 +455,18 @@ def fetch_mygeotab_devices(database: str, username: str, password: str, server: 
 
 
 def exchange_certificate_material() -> tuple[str, str]:
-    secret_name = os.getenv("EXCHANGE_CERTIFICATE_SECRET_NAME")
-    cert_value = get_secret_value(secret_name)
-    password = get_secret_value(os.getenv("EXCHANGE_CERTIFICATE_PASSWORD_SECRET_NAME"))
-    return cert_value, password
+    return os.getenv("EXCHANGE_CERTIFICATE", ""), os.getenv("EXCHANGE_CERTIFICATE_PASSWORD", "")
 
 
 def exchange_sync_settings() -> dict[str, Any]:
     pwsh_path = shutil.which("pwsh")
     if not pwsh_path:
-        raise RuntimeError("pwsh is not available in the Function App runtime")
+        raise RuntimeError("pwsh is not available in the backend runtime")
 
     if not EXCHANGE_SYNC_SCRIPT.exists():
         raise RuntimeError("exchange_sync.ps1 is missing")
 
-    equipment_domain = (os.getenv("EQUIPMENT_DOMAIN", "") or get_secret_value(os.getenv("EQUIPMENT_DOMAIN_SECRET_NAME"))).strip()
+    equipment_domain = os.getenv("EQUIPMENT_DOMAIN", "").strip()
     exchange_app_id = os.getenv("EXCHANGE_CLIENT_ID", "").strip()
     exchange_org = os.getenv("EXCHANGE_ORGANIZATION") or equipment_domain
 
@@ -864,18 +835,17 @@ def run_sync(body: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
 
 
 def service_config_summary() -> dict[str, Any]:
-    database_configured = bool(os.getenv("MYGEOTAB_DATABASE")) or bool(os.getenv("MYGEOTAB_DATABASE_SECRET_NAME"))
-    username_configured = bool(os.getenv("MYGEOTAB_USERNAME")) or bool(os.getenv("MYGEOTAB_USERNAME_SECRET_NAME"))
-    server_configured = bool(os.getenv("MYGEOTAB_SERVER")) or bool(os.getenv("MYGEOTAB_SERVER_SECRET_NAME"))
+    database_configured = bool(os.getenv("MYGEOTAB_DATABASE"))
+    username_configured = bool(os.getenv("MYGEOTAB_USERNAME"))
+    server_configured = bool(os.getenv("MYGEOTAB_SERVER"))
 
     return {
         "deploymentMode": "single-tenant",
-        "backend": "azure-function-app",
+        "backend": "azure-container-apps",
         "equipmentDomain": os.getenv("EQUIPMENT_DOMAIN", ""),
         "defaultTimezone": os.getenv("DEFAULT_TIMEZONE", "AUS Eastern Standard Time"),
         "makeMailboxVisibleOnFirstSync": bool_setting("MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC", True),
         "syncMode": "async-job",
-        "keyVaultConfigured": bool(os.getenv("KEY_VAULT_URL")),
         "myGeotabDatabaseConfigured": database_configured,
         "myGeotabUsernameConfigured": username_configured,
         "myGeotabServerConfigured": server_configured,

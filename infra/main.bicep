@@ -9,32 +9,32 @@ param environmentName string = 'prod'
 @description('Base application name used in resource naming.')
 param appName string = 'fleetbridge'
 
-@description('Storage account name for the Function App.')
+@description('Storage account name for the backend.')
 param storageAccountName string
 
-@description('Function App name.')
-param functionAppName string
+@description('Container App name.')
+param containerAppName string = '${appName}-${environmentName}-app'
 
-@description('Key Vault name.')
-param keyVaultName string
-
-@description('App Service plan name.')
-param appServicePlanName string = '${appName}-${environmentName}-plan'
-
-@description('App Service plan SKU name.')
-param appServicePlanSkuName string = 'B2'
-
-@description('App Service plan SKU tier.')
-param appServicePlanSkuTier string = 'Basic'
+@description('Container Apps managed environment name.')
+param containerAppEnvironmentName string = '${appName}-${environmentName}-env'
 
 @description('Azure Container Registry name.')
 param containerRegistryName string
 
-@description('Repository name for the Function App container image.')
+@description('Repository name for the backend container image.')
 param functionImageRepository string = 'fleetbridge-function'
 
-@description('Container image tag for the Function App.')
+@description('Container image tag for the backend.')
 param functionImageTag string = 'latest'
+
+@description('Maximum Container App replica count.')
+param containerAppMaxReplicas int = 3
+
+@description('Container CPU cores.')
+param containerCpu string = '0.5'
+
+@description('Container memory allocation.')
+param containerMemory string = '1.0Gi'
 
 @description('Single-tenant Exchange tenant ID.')
 param exchangeTenantId string = ''
@@ -54,27 +54,25 @@ param myGeotabServer string = 'my.geotab.com'
 @description('Whether first successful sync should make pre-created hidden mailboxes visible.')
 param makeMailboxVisibleOnFirstSync bool = true
 
-@description('Secret name containing the MyGeotab password.')
-param myGeotabPasswordSecretName string = 'MyGeotabPassword'
+@secure()
+@description('MyGeotab database name.')
+param myGeotabDatabase string
 
-@description('Secret name containing the Exchange certificate or secret material.')
-param exchangeCertificateSecretName string = 'ExchangeCertificate'
+@secure()
+@description('MyGeotab username.')
+param myGeotabUsername string
 
-@description('Optional object ID of the deployment principal that needs Key Vault secret write access.')
-param deploymentPrincipalObjectId string = ''
+@secure()
+@description('MyGeotab password.')
+param myGeotabPassword string
 
-@description('Principal type for the deployment principal role assignment.')
-@allowed([
-  'ServicePrincipal'
-  'User'
-])
-param deploymentPrincipalType string = 'ServicePrincipal'
+@secure()
+@description('Base64 encoded Exchange PFX certificate.')
+param exchangeCertificate string
 
-@description('Allowed CORS origins for the Function App.')
-param allowedCorsOrigins array = [
-  'https://*.geotab.com'
-  'https://*.geotab.com.au'
-]
+@secure()
+@description('Exchange PFX certificate password.')
+param exchangeCertificatePassword string
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
@@ -102,171 +100,155 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' =
   }
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: keyVaultName
+resource managedEnvironment 'Microsoft.App/managedEnvironments@2022-03-01' = {
+  name: containerAppEnvironmentName
   location: location
   properties: {
-    sku: {
-      family: 'A'
-      name: 'standard'
+    appLogsConfiguration: {
+      destination: 'none'
     }
-    tenantId: subscription().tenantId
-    enabledForTemplateDeployment: true
-    enableRbacAuthorization: true
-    softDeleteRetentionInDays: 90
-    enableSoftDelete: true
-    publicNetworkAccess: 'Enabled'
-  }
-}
-
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-12-01' = {
-  name: appServicePlanName
-  location: location
-  sku: {
-    name: appServicePlanSkuName
-    tier: appServicePlanSkuTier
-  }
-  kind: 'functionapp'
-  properties: {
-    reserved: true
   }
 }
 
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 var containerImage = '${containerRegistry.properties.loginServer}/${functionImageRepository}:${functionImageTag}'
-var keyVaultDnsSuffix = environment().suffixes.keyvaultDns
 
-resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
-  name: functionAppName
+resource containerApp 'Microsoft.App/containerApps@2022-03-01' = {
+  name: containerAppName
   location: location
-  kind: 'functionapp,linux,container'
+  kind: 'functionapp'
   identity: {
     type: 'SystemAssigned'
   }
   properties: {
-    serverFarmId: appServicePlan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'DOCKER|${containerImage}'
-      acrUseManagedIdentityCreds: true
-      ftpsState: 'Disabled'
-      minTlsVersion: '1.2'
-      cors: {
-        allowedOrigins: allowedCorsOrigins
+    managedEnvironmentId: managedEnvironment.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        allowInsecure: false
+        targetPort: 80
+        transport: 'auto'
       }
-      appSettings: [
+      registries: [
         {
-          name: 'AzureWebJobsStorage'
+          server: containerRegistry.properties.loginServer
+          identity: 'system'
+        }
+      ]
+      secrets: [
+        {
+          name: 'azurewebjobsstorage'
           value: storageConnectionString
         }
         {
-          name: 'FUNCTIONS_EXTENSION_VERSION'
-          value: '~4'
+          name: 'mygeotab-database'
+          value: myGeotabDatabase
         }
         {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'python'
+          name: 'mygeotab-username'
+          value: myGeotabUsername
         }
         {
-          name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE'
-          value: 'false'
+          name: 'mygeotab-password'
+          value: myGeotabPassword
         }
         {
-          name: 'DOCKER_REGISTRY_SERVER_URL'
-          value: 'https://${containerRegistry.properties.loginServer}'
+          name: 'exchange-certificate'
+          value: exchangeCertificate
         }
         {
-          name: 'KEY_VAULT_URL'
-          value: 'https://${keyVault.name}${keyVaultDnsSuffix}/'
-        }
-        {
-          name: 'EXCHANGE_TENANT_ID'
-          value: exchangeTenantId
-        }
-        {
-          name: 'EXCHANGE_CLIENT_ID'
-          value: exchangeClientId
-        }
-        {
-          name: 'EQUIPMENT_DOMAIN'
-          value: equipmentDomain
-        }
-        {
-          name: 'DEFAULT_TIMEZONE'
-          value: defaultTimezone
-        }
-        {
-          name: 'MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC'
-          value: string(makeMailboxVisibleOnFirstSync)
-        }
-        {
-          name: 'MYGEOTAB_PASSWORD_SECRET_NAME'
-          value: myGeotabPasswordSecretName
-        }
-        {
-          name: 'MYGEOTAB_DATABASE_SECRET_NAME'
-          value: 'MyGeotabDatabase'
-        }
-        {
-          name: 'MYGEOTAB_USERNAME_SECRET_NAME'
-          value: 'MyGeotabUsername'
-        }
-        {
-          name: 'MYGEOTAB_SERVER'
-          value: myGeotabServer
-        }
-        {
-          name: 'EXCHANGE_CERTIFICATE_SECRET_NAME'
-          value: exchangeCertificateSecretName
-        }
-        {
-          name: 'EXCHANGE_CERTIFICATE_PASSWORD_SECRET_NAME'
-          value: 'ExchangeCertificatePassword'
-        }
-        {
-          name: 'EXCHANGE_ORGANIZATION'
-          value: equipmentDomain
-        }
-        {
-          name: 'EQUIPMENT_DOMAIN_SECRET_NAME'
-          value: 'EquipmentDomain'
+          name: 'exchange-certificate-password'
+          value: exchangeCertificatePassword
         }
       ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'fleetbridge-backend'
+          image: containerImage
+          env: [
+            {
+              name: 'AzureWebJobsStorage'
+              secretRef: 'azurewebjobsstorage'
+            }
+            {
+              name: 'MYGEOTAB_DATABASE'
+              secretRef: 'mygeotab-database'
+            }
+            {
+              name: 'MYGEOTAB_USERNAME'
+              secretRef: 'mygeotab-username'
+            }
+            {
+              name: 'MYGEOTAB_PASSWORD'
+              secretRef: 'mygeotab-password'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE'
+              secretRef: 'exchange-certificate'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE_PASSWORD'
+              secretRef: 'exchange-certificate-password'
+            }
+            {
+              name: 'FUNCTIONS_EXTENSION_VERSION'
+              value: '~4'
+            }
+            {
+              name: 'FUNCTIONS_WORKER_RUNTIME'
+              value: 'python'
+            }
+            {
+              name: 'EXCHANGE_TENANT_ID'
+              value: exchangeTenantId
+            }
+            {
+              name: 'EXCHANGE_CLIENT_ID'
+              value: exchangeClientId
+            }
+            {
+              name: 'EQUIPMENT_DOMAIN'
+              value: equipmentDomain
+            }
+            {
+              name: 'DEFAULT_TIMEZONE'
+              value: defaultTimezone
+            }
+            {
+              name: 'MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC'
+              value: string(makeMailboxVisibleOnFirstSync)
+            }
+            {
+              name: 'MYGEOTAB_SERVER'
+              value: myGeotabServer
+            }
+            {
+              name: 'EXCHANGE_ORGANIZATION'
+              value: equipmentDomain
+            }
+          ]
+          resources: {
+            cpu: json(containerCpu)
+            memory: containerMemory
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: containerAppMaxReplicas
+      }
     }
   }
 }
 
-resource keyVaultSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, functionApp.id, 'KeyVaultSecretsUser')
-  scope: keyVault
-  properties: {
-    principalId: functionApp.identity.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
-    )
-  }
-}
-
-resource keyVaultSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deploymentPrincipalObjectId)) {
-  name: guid(keyVault.id, deploymentPrincipalObjectId, 'KeyVaultSecretsOfficer')
-  scope: keyVault
-  properties: {
-    principalId: deploymentPrincipalObjectId
-    principalType: deploymentPrincipalType
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
-    )
-  }
-}
-
 resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(containerRegistry.id, functionApp.id, 'AcrPull')
+  name: guid(containerRegistry.id, containerApp.id, 'AcrPull')
   scope: containerRegistry
   properties: {
-    principalId: functionApp.identity.principalId
+    principalId: containerApp.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -275,8 +257,7 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-output functionAppName string = functionApp.name
-output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
-output keyVaultUrl string = 'https://${keyVault.name}${keyVaultDnsSuffix}/'
+output containerAppName string = containerApp.name
+output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output containerRegistryLoginServer string = containerRegistry.properties.loginServer
 output containerImage string = containerImage

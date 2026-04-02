@@ -1,19 +1,10 @@
 # Scripts
 
-This directory is reserved for operational scripts that support the single-tenant Function App deployment model.
+This directory contains operational scripts for the single-tenant Container Apps deployment model.
 
-Examples:
+Current scripts:
 
-- deploy infrastructure wrappers
-- seed Key Vault secrets
-- validate Exchange prerequisites
+- `deploy-container-app.sh` deploys Azure resources from environment variables and publishes `function-app/`
+- `bootstrap-github-actions.sh` configures GitHub OIDC and writes required GitHub secrets
 
-Historical scripts for the prior container-app and SaaS model have been removed from this repository.
-
-Current script:
-
-- `deploy-function-app.sh` deploys `infra/main.bicep` and then publishes `function-app/`
-- `seed-key-vault-secrets.sh` stores the required single-tenant MyGeotab and Exchange secrets in Key Vault
-- `bootstrap-github-actions.sh` creates the GitHub Actions Azure identity and repository secrets
-
-The repository-level one-run deployment entry point is `.github/workflows/deploy-single-tenant.yml`.
+The old Key Vault seeding script and dedicated Function App deployment script are no longer part of the active path.
