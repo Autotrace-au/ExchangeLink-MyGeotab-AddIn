@@ -213,6 +213,181 @@ function Resolve-RecipientIdentity {
   }
 }
 
+function Normalize-Text {
+  param(
+    $Value,
+    [switch]$ToLower
+  )
+
+  if ($null -eq $Value) {
+    return ''
+  }
+
+  $text = [string]$Value
+  $trimmed = $text.Trim()
+  if ($ToLower) {
+    return $trimmed.ToLowerInvariant()
+  }
+  return $trimmed
+}
+
+function Get-IdentityKeySet {
+  param(
+    $Values
+  )
+
+  $set = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+  if ($null -eq $Values) {
+    return $set
+  }
+
+  if (($Values -is [System.Collections.IEnumerable]) -and -not ($Values -is [string])) {
+    foreach ($value in $Values) {
+      foreach ($key in (Get-IdentityKeys -Value $value)) {
+        [void]$set.Add($key)
+      }
+    }
+    return $set
+  }
+
+  foreach ($key in (Get-IdentityKeys -Value $Values)) {
+    [void]$set.Add($key)
+  }
+  return $set
+}
+
+function Test-IdentitySetsEqual {
+  param(
+    [Parameter(Mandatory = $true)]$Left,
+    [Parameter(Mandatory = $true)]$Right
+  )
+
+  if ($Left.Count -ne $Right.Count) {
+    return $false
+  }
+
+  foreach ($key in $Left) {
+    if (-not $Right.Contains($key)) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Get-RegionalLanguageCode {
+  param(
+    $RegionalConfiguration
+  )
+
+  if ($null -eq $RegionalConfiguration) {
+    return ''
+  }
+
+  $language = $RegionalConfiguration.Language
+  if ($null -eq $language) {
+    return ''
+  }
+
+  if ($language -is [string]) {
+    return Normalize-Text -Value $language -ToLower
+  }
+
+  if ($language.PSObject.Properties['Name'] -and -not [string]::IsNullOrWhiteSpace([string]$language.Name)) {
+    return Normalize-Text -Value ([string]$language.Name) -ToLower
+  }
+
+  return Normalize-Text -Value ([string]$language) -ToLower
+}
+
+function Test-IsEditorPermission {
+  param(
+    $Permission
+  )
+
+  $accessRights = @()
+  if ($Permission -and $Permission.AccessRights) {
+    $accessRights = @($Permission.AccessRights | ForEach-Object { Normalize-Text -Value ([string]$_) })
+  }
+
+  return ($accessRights.Count -eq 1 -and $accessRights[0] -eq 'Editor')
+}
+
+function Test-CalendarProcessingNeedsUpdate {
+  param(
+    $CalendarProcessing,
+    [bool]$BookableValue,
+    [bool]$AllowConflictsValue,
+    [int]$BookingWindowInDaysValue,
+    [int]$MaximumDurationInMinutesValue,
+    [bool]$AllowRecurringMeetingsValue,
+    $DesiredApproverKeys
+  )
+
+  if ($null -eq $CalendarProcessing) {
+    return $true
+  }
+
+  if ((Normalize-Text -Value ([string]$CalendarProcessing.AutomateProcessing)) -ne 'AutoAccept') {
+    return $true
+  }
+
+  if ($BookableValue) {
+    if ([bool]$CalendarProcessing.AllowConflicts -ne $AllowConflictsValue) {
+      return $true
+    }
+    if ([int]$CalendarProcessing.BookingWindowInDays -ne $BookingWindowInDaysValue) {
+      return $true
+    }
+    if ([int]$CalendarProcessing.MaximumDurationInMinutes -ne $MaximumDurationInMinutesValue) {
+      return $true
+    }
+    if ([bool]$CalendarProcessing.AllowRecurringMeetings -ne $AllowRecurringMeetingsValue) {
+      return $true
+    }
+    if (-not [bool]$CalendarProcessing.AllBookInPolicy) {
+      return $true
+    }
+    if ([bool]$CalendarProcessing.AllRequestInPolicy) {
+      return $true
+    }
+
+    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy
+    if (-not (Test-IdentitySetsEqual -Left $currentBookInPolicyKeys -Right $DesiredApproverKeys)) {
+      return $true
+    }
+
+    return $false
+  }
+
+  if ([bool]$CalendarProcessing.AllBookInPolicy) {
+    return $true
+  }
+  if ([bool]$CalendarProcessing.AllRequestInPolicy) {
+    return $true
+  }
+  if ([bool]$CalendarProcessing.AllRequestOutOfPolicy) {
+    return $true
+  }
+  if ([bool]$CalendarProcessing.ForwardRequestsToDelegates) {
+    return $true
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy).Count -gt 0) {
+    return $true
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestInPolicy).Count -gt 0) {
+    return $true
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestOutOfPolicy).Count -gt 0) {
+    return $true
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.ResourceDelegates).Count -gt 0) {
+    return $true
+  }
+
+  return $false
+}
+
 function Invoke-MailboxSync {
   param(
     [Parameter(Mandatory = $true)][hashtable]$Item
@@ -262,16 +437,17 @@ function Invoke-MailboxSync {
       $mailboxIdentity = $mailbox.PrimarySmtpAddress
     }
 
+    $mailboxUpdated = $false
     $setMailboxParams = @{
       Identity = $mailboxIdentity
     }
-    if ($mailbox.DisplayName -ne $displayName) {
+    if ((Normalize-Text -Value $mailbox.DisplayName) -ne (Normalize-Text -Value $displayName)) {
       $setMailboxParams.DisplayName = $displayName
     }
-    if ($mailbox.Alias -ne $alias) {
+    if ((Normalize-Text -Value $mailbox.Alias -ToLower) -ne (Normalize-Text -Value $alias -ToLower)) {
       $setMailboxParams.Alias = $alias
     }
-    if ([string]$mailbox.PrimarySmtpAddress -ne $primarySmtpAddress) {
+    if ((Normalize-Text -Value ([string]$mailbox.PrimarySmtpAddress) -ToLower) -ne (Normalize-Text -Value $primarySmtpAddress -ToLower)) {
       $setMailboxParams.PrimarySmtpAddress = $primarySmtpAddress
     }
     if ($bookableValue) {
@@ -282,46 +458,76 @@ function Invoke-MailboxSync {
       $setMailboxParams.HiddenFromAddressListsEnabled = $true
     }
     if (-not [string]::IsNullOrWhiteSpace($vinValue) -or -not [string]::IsNullOrWhiteSpace($licensePlateValue)) {
-      $setMailboxParams.CustomAttribute1 = $vinValue
-      $setMailboxParams.CustomAttribute2 = $licensePlateValue
+      if ((Normalize-Text -Value $mailbox.CustomAttribute1) -ne (Normalize-Text -Value $vinValue) -or
+          (Normalize-Text -Value $mailbox.CustomAttribute2) -ne (Normalize-Text -Value $licensePlateValue)) {
+        $setMailboxParams.CustomAttribute1 = $vinValue
+        $setMailboxParams.CustomAttribute2 = $licensePlateValue
+      }
     }
     if ($setMailboxParams.Count -gt 1) {
       Set-Mailbox @setMailboxParams
+      $mailboxUpdated = $true
     }
 
-    Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
+    $regionalConfiguration = Get-MailboxRegionalConfiguration -Identity $mailboxIdentity -ErrorAction SilentlyContinue
+    $regionalConfigUpdated = $false
+    if ((Normalize-Text -Value ($regionalConfiguration.TimeZone)) -ne (Normalize-Text -Value $timeZone) -or
+        (Get-RegionalLanguageCode -RegionalConfiguration $regionalConfiguration) -ne (Normalize-Text -Value $language -ToLower)) {
+      Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
+      $regionalConfigUpdated = $true
+    }
 
     $approverList = Split-IdentifierList -Value $approversValue
-
-    if ($bookableValue) {
-      $calParams = @{
-        Identity                 = $mailboxIdentity
-        AutomateProcessing       = 'AutoAccept'
-        AllowConflicts           = $allowConflictsValue
-        BookingWindowInDays      = $bookingWindowInDaysValue
-        MaximumDurationInMinutes = $maximumDurationInMinutesValue
-        AllowRecurringMeetings   = $allowRecurringMeetingsValue
-        AllBookInPolicy          = $true
-        AllRequestInPolicy       = $false
-        BookInPolicy             = $approverList
+    $desiredApproverKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($approver in $approverList) {
+      $resolvedApprover = Resolve-RecipientIdentity -Identity $approver
+      foreach ($key in $resolvedApprover.Keys) {
+        [void]$desiredApproverKeys.Add($key)
       }
-      Set-CalendarProcessing @calParams
-    } else {
-      Set-CalendarProcessing `
-        -Identity $mailboxIdentity `
-        -AutomateProcessing 'AutoAccept' `
-        -AllBookInPolicy:$false `
-        -AllRequestInPolicy:$false `
-        -AllRequestOutOfPolicy:$false `
-        -BookInPolicy @() `
-        -RequestInPolicy @() `
-        -RequestOutOfPolicy @() `
-        -ResourceDelegates @() `
-        -ForwardRequestsToDelegates:$false
+    }
+
+    $calendarProcessing = Get-CalendarProcessing -Identity $mailboxIdentity -ErrorAction SilentlyContinue
+    $calendarProcessingUpdated = $false
+
+    if (Test-CalendarProcessingNeedsUpdate `
+      -CalendarProcessing $calendarProcessing `
+      -BookableValue $bookableValue `
+      -AllowConflictsValue $allowConflictsValue `
+      -BookingWindowInDaysValue $bookingWindowInDaysValue `
+      -MaximumDurationInMinutesValue $maximumDurationInMinutesValue `
+      -AllowRecurringMeetingsValue $allowRecurringMeetingsValue `
+      -DesiredApproverKeys $desiredApproverKeys) {
+      if ($bookableValue) {
+        $calParams = @{
+          Identity                 = $mailboxIdentity
+          AutomateProcessing       = 'AutoAccept'
+          AllowConflicts           = $allowConflictsValue
+          BookingWindowInDays      = $bookingWindowInDaysValue
+          MaximumDurationInMinutes = $maximumDurationInMinutesValue
+          AllowRecurringMeetings   = $allowRecurringMeetingsValue
+          AllBookInPolicy          = $true
+          AllRequestInPolicy       = $false
+          BookInPolicy             = $approverList
+        }
+        Set-CalendarProcessing @calParams
+      } else {
+        Set-CalendarProcessing `
+          -Identity $mailboxIdentity `
+          -AutomateProcessing 'AutoAccept' `
+          -AllBookInPolicy:$false `
+          -AllRequestInPolicy:$false `
+          -AllRequestOutOfPolicy:$false `
+          -BookInPolicy @() `
+          -RequestInPolicy @() `
+          -RequestOutOfPolicy @() `
+          -ResourceDelegates @() `
+          -ForwardRequestsToDelegates:$false
+      }
+      $calendarProcessingUpdated = $true
     }
 
     $managerList = Split-IdentifierList -Value $fleetManagersValue
-    $calendarIdentity = "$($mailbox.PrimarySmtpAddress):\Calendar"
+    $calendarIdentity = "$($primarySmtpAddress):\Calendar"
     $existingManagerPermissions = @(
       Get-MailboxFolderPermission -Identity $calendarIdentity -ErrorAction SilentlyContinue |
       Where-Object {
@@ -361,6 +567,7 @@ function Invoke-MailboxSync {
       $resolvedManagers += $resolvedManager
     }
 
+    $managerPermissionsUpdated = $false
     foreach ($resolvedManager in $resolvedManagers) {
       $managerIdentity = [string]$resolvedManager.Identity
       $matchingPermission = $null
@@ -373,17 +580,21 @@ function Invoke-MailboxSync {
 
       try {
         if ($matchingPermission) {
-          Set-MailboxFolderPermission `
-            -Identity $calendarIdentity `
-            -User $managerIdentity `
-            -AccessRights Editor `
-            -ErrorAction Stop | Out-Null
+          if (-not (Test-IsEditorPermission -Permission $matchingPermission)) {
+            Set-MailboxFolderPermission `
+              -Identity $calendarIdentity `
+              -User $managerIdentity `
+              -AccessRights Editor `
+              -ErrorAction Stop | Out-Null
+            $managerPermissionsUpdated = $true
+          }
         } else {
           Add-MailboxFolderPermission `
             -Identity $calendarIdentity `
             -User $managerIdentity `
             -AccessRights Editor `
             -ErrorAction Stop | Out-Null
+          $managerPermissionsUpdated = $true
         }
       } catch {
         if ($_.Exception.Message -notmatch 'already' -and $_.Exception.Message -notmatch 'existing permission entry') {
@@ -405,6 +616,29 @@ function Invoke-MailboxSync {
         -User $existingManager `
         -Confirm:$false `
         -ErrorAction SilentlyContinue | Out-Null
+      $managerPermissionsUpdated = $true
+    }
+
+    $changesApplied = $mailboxUpdated -or $regionalConfigUpdated -or $calendarProcessingUpdated -or $managerPermissionsUpdated
+    if (-not $changesApplied) {
+      return @{
+        success = $true
+        message = 'Mailbox already up to date'
+        found = $true
+        skipped = $true
+        bookable = [bool]$bookableValue
+        allowRecurringMeetings = [bool]$allowRecurringMeetingsValue
+        allowConflicts = [bool]$allowConflictsValue
+        approverCount = $approverList.Count
+        fleetManagerCount = $managerList.Count
+        primarySmtpAddress = $primarySmtpAddress
+        displayName = $displayName
+        wasHidden = [bool]$wasHidden
+        madeVisible = $false
+        deviceId = $deviceId
+        serial = $serial
+        vehicleName = $vehicleName
+      }
     }
 
     return @{
