@@ -244,12 +244,15 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def mygeotab_credentials() -> tuple[str, str, str, str]:
+def mygeotab_credentials(body: dict[str, Any] | None = None) -> tuple[str, str, str, str]:
+    body = body or {}
+
     return (
-        os.getenv("MYGEOTAB_DATABASE", "").strip(),
-        os.getenv("MYGEOTAB_USERNAME", "").strip(),
-        os.getenv("MYGEOTAB_PASSWORD", ""),
-        os.getenv("MYGEOTAB_SERVER", "my.geotab.com").strip() or "my.geotab.com",
+        str(body.get("myGeotabDatabase") or os.getenv("MYGEOTAB_DATABASE", "")).strip(),
+        str(body.get("myGeotabUsername") or os.getenv("MYGEOTAB_USERNAME", "")).strip(),
+        str(body.get("myGeotabPassword") or os.getenv("MYGEOTAB_PASSWORD", "")),
+        str(body.get("myGeotabServer") or os.getenv("MYGEOTAB_SERVER", "my.geotab.com")).strip()
+        or "my.geotab.com",
     )
 
 
