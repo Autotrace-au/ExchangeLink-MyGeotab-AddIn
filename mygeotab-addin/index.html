@@ -2066,10 +2066,7 @@
                     showBackendResult('Testing connection...', 'info');
 
                     const response = await fetch(`${backendUrl}/api/health`, {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
+                        method: 'GET'
                     });
 
                     if (response.ok) {
@@ -2322,10 +2319,7 @@
 
                 for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
                     const response = await fetch(pollEndpoint, {
-                        method: 'GET',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
+                        method: 'GET'
                     });
 
                     const payload = await response.json();
