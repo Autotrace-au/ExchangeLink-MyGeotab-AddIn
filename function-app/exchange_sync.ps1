@@ -569,30 +569,37 @@ function Invoke-MailboxSync {
     }
 
     $mailboxUpdated = $false
+    $mailboxChangedFields = @()
     $setMailboxParams = @{
       Identity = $mailboxIdentity
     }
     if ((Normalize-Text -Value $mailbox.DisplayName) -ne (Normalize-Text -Value $displayName)) {
       $setMailboxParams.DisplayName = $displayName
+      $mailboxChangedFields += 'displayName'
     }
     if ((Normalize-Text -Value $mailbox.Alias -ToLower) -ne (Normalize-Text -Value $alias -ToLower)) {
       $setMailboxParams.Alias = $alias
+      $mailboxChangedFields += 'alias'
     }
     if ((Normalize-Text -Value ([string]$mailbox.PrimarySmtpAddress) -ToLower) -ne (Normalize-Text -Value $primarySmtpAddress -ToLower)) {
       $setMailboxParams.PrimarySmtpAddress = $primarySmtpAddress
+      $mailboxChangedFields += 'primarySmtpAddress'
     }
     if ($bookableValue) {
       if ($makeVisibleValue -and $wasHidden) {
         $setMailboxParams.HiddenFromAddressListsEnabled = $false
+        $mailboxChangedFields += 'hiddenFromAddressListsEnabled'
       }
     } elseif (-not $wasHidden) {
       $setMailboxParams.HiddenFromAddressListsEnabled = $true
+      $mailboxChangedFields += 'hiddenFromAddressListsEnabled'
     }
     if (-not [string]::IsNullOrWhiteSpace($vinValue) -or -not [string]::IsNullOrWhiteSpace($licensePlateValue)) {
       if ((Normalize-Text -Value $mailbox.CustomAttribute1) -ne (Normalize-Text -Value $vinValue) -or
           (Normalize-Text -Value $mailbox.CustomAttribute2) -ne (Normalize-Text -Value $licensePlateValue)) {
         $setMailboxParams.CustomAttribute1 = $vinValue
         $setMailboxParams.CustomAttribute2 = $licensePlateValue
+        $mailboxChangedFields += @('customAttribute1', 'customAttribute2')
       }
     }
     if ($setMailboxParams.Count -gt 1) {
@@ -602,8 +609,15 @@ function Invoke-MailboxSync {
 
     $regionalConfiguration = Get-MailboxRegionalConfiguration -Identity $mailboxIdentity -ErrorAction SilentlyContinue
     $regionalConfigUpdated = $false
+    $regionalConfigChangedFields = @()
     if (-not (Test-TimeZoneMatchesDesired -RegionalConfiguration $regionalConfiguration -DesiredTimeZone $timeZone) -or
         (Get-RegionalLanguageCode -RegionalConfiguration $regionalConfiguration) -ne (Normalize-Text -Value $language -ToLower)) {
+      if (-not (Test-TimeZoneMatchesDesired -RegionalConfiguration $regionalConfiguration -DesiredTimeZone $timeZone)) {
+        $regionalConfigChangedFields += 'timeZone'
+      }
+      if ((Get-RegionalLanguageCode -RegionalConfiguration $regionalConfiguration) -ne (Normalize-Text -Value $language -ToLower)) {
+        $regionalConfigChangedFields += 'language'
+      }
       Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
       $regionalConfigUpdated = $true
     }
@@ -619,6 +633,7 @@ function Invoke-MailboxSync {
 
     $calendarProcessing = Get-CalendarProcessing -Identity $mailboxIdentity -ErrorAction SilentlyContinue
     $calendarProcessingUpdated = $false
+    $calendarProcessingChangedFields = @()
 
     if (Test-CalendarProcessingNeedsUpdate `
       -CalendarProcessing $calendarProcessing `
@@ -628,6 +643,7 @@ function Invoke-MailboxSync {
       -MaximumDurationInMinutesValue $maximumDurationInMinutesValue `
       -AllowRecurringMeetingsValue $allowRecurringMeetingsValue `
       -DesiredApproverKeys $desiredApproverKeys) {
+      $calendarProcessingChangedFields += 'policy'
       if ($bookableValue) {
         $calParams = @{
           Identity                 = $mailboxIdentity
@@ -699,6 +715,7 @@ function Invoke-MailboxSync {
     }
 
     $managerPermissionsUpdated = $false
+    $managerPermissionChanges = @()
     foreach ($resolvedManager in $resolvedManagers) {
       $managerIdentity = [string]$resolvedManager.Identity
       $matchingPermission = $null
@@ -718,6 +735,7 @@ function Invoke-MailboxSync {
               -AccessRights Editor `
               -ErrorAction Stop | Out-Null
             $managerPermissionsUpdated = $true
+            $managerPermissionChanges += "set:$managerIdentity"
           }
         } else {
           Add-MailboxFolderPermission `
@@ -726,6 +744,7 @@ function Invoke-MailboxSync {
             -AccessRights Editor `
             -ErrorAction Stop | Out-Null
           $managerPermissionsUpdated = $true
+          $managerPermissionChanges += "add:$managerIdentity"
         }
       } catch {
         if ($_.Exception.Message -notmatch 'already' -and $_.Exception.Message -notmatch 'existing permission entry') {
@@ -748,9 +767,23 @@ function Invoke-MailboxSync {
         -Confirm:$false `
         -ErrorAction SilentlyContinue | Out-Null
       $managerPermissionsUpdated = $true
+      $managerPermissionChanges += "remove:$existingManager"
     }
 
     $changesApplied = $mailboxUpdated -or $regionalConfigUpdated -or $calendarProcessingUpdated -or $managerPermissionsUpdated
+    $updatedComponents = @()
+    if ($mailboxUpdated) {
+      $updatedComponents += 'mailbox'
+    }
+    if ($regionalConfigUpdated) {
+      $updatedComponents += 'regionalConfiguration'
+    }
+    if ($calendarProcessingUpdated) {
+      $updatedComponents += 'calendarProcessing'
+    }
+    if ($managerPermissionsUpdated) {
+      $updatedComponents += 'managerPermissions'
+    }
     if (-not $changesApplied) {
       return @{
         success = $true
@@ -766,6 +799,11 @@ function Invoke-MailboxSync {
         displayName = $displayName
         wasHidden = [bool]$wasHidden
         madeVisible = $false
+        updatedComponents = @()
+        mailboxChangedFields = @()
+        regionalConfigChangedFields = @()
+        calendarProcessingChangedFields = @()
+        managerPermissionChanges = @()
         deviceId = $deviceId
         serial = $serial
         vehicleName = $vehicleName
@@ -774,7 +812,7 @@ function Invoke-MailboxSync {
 
     return @{
       success = $true
-      message = 'Mailbox updated'
+      message = if ($updatedComponents.Count -gt 0) { "Mailbox updated: $($updatedComponents -join ', ')" } else { 'Mailbox updated' }
       found = $true
       bookable = [bool]$bookableValue
       allowRecurringMeetings = [bool]$allowRecurringMeetingsValue
@@ -785,6 +823,11 @@ function Invoke-MailboxSync {
       displayName = $displayName
       wasHidden = [bool]$wasHidden
       madeVisible = [bool]($makeVisibleValue -and $wasHidden)
+      updatedComponents = @($updatedComponents)
+      mailboxChangedFields = @($mailboxChangedFields | Select-Object -Unique)
+      regionalConfigChangedFields = @($regionalConfigChangedFields | Select-Object -Unique)
+      calendarProcessingChangedFields = @($calendarProcessingChangedFields | Select-Object -Unique)
+      managerPermissionChanges = @($managerPermissionChanges | Select-Object -Unique)
       deviceId = $deviceId
       serial = $serial
       vehicleName = $vehicleName
