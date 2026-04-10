@@ -218,7 +218,7 @@ function Resolve-RecipientIdentity {
   }
 
   if ($recipient) {
-    foreach ($candidate in @(
+    $canonicalCandidates = @(
       $recipient.DisplayName,
       $recipient.Name,
       $recipient.Alias,
@@ -226,16 +226,11 @@ function Resolve-RecipientIdentity {
       $recipient.PrimarySmtpAddress,
       $recipient.WindowsEmailAddress,
       $recipient.UserPrincipalName,
-      $recipient.ExternalEmailAddress,
       $recipient.LegacyExchangeDN
-    )) {
-      foreach ($key in (Get-IdentityKeys -Value $candidate)) {
-        [void]$keys.Add($key)
-      }
-    }
+    )
 
-    foreach ($address in @($recipient.EmailAddresses)) {
-      foreach ($key in (Get-IdentityKeys -Value ([string]$address))) {
+    foreach ($candidate in $canonicalCandidates) {
+      foreach ($key in (Get-IdentityKeys -Value $candidate)) {
         [void]$keys.Add($key)
       }
     }
