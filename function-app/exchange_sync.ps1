@@ -127,6 +127,28 @@ function Get-IdentityKeys {
         [void]$keys.Add($suffix.Trim().ToLowerInvariant())
       }
     }
+
+    if ($trimmed.StartsWith('/o=', [System.StringComparison]::OrdinalIgnoreCase)) {
+      $legacyLeaf = $trimmed.Split('/')[-1]
+      if (-not [string]::IsNullOrWhiteSpace($legacyLeaf)) {
+        $normalizedLeaf = $legacyLeaf.Trim().ToLowerInvariant()
+        [void]$keys.Add($normalizedLeaf)
+
+        if ($normalizedLeaf.Contains('=')) {
+          $legacyLeafValue = $normalizedLeaf.Split('=')[-1].Trim()
+          if (-not [string]::IsNullOrWhiteSpace($legacyLeafValue)) {
+            [void]$keys.Add($legacyLeafValue)
+
+            if ($legacyLeafValue.Contains('-')) {
+              $legacyLeafTail = $legacyLeafValue.Split('-')[-1].Trim()
+              if (-not [string]::IsNullOrWhiteSpace($legacyLeafTail)) {
+                [void]$keys.Add($legacyLeafTail)
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   if ($null -eq $Value) {
@@ -204,9 +226,16 @@ function Resolve-RecipientIdentity {
       $recipient.PrimarySmtpAddress,
       $recipient.WindowsEmailAddress,
       $recipient.UserPrincipalName,
-      $recipient.ExternalEmailAddress
+      $recipient.ExternalEmailAddress,
+      $recipient.LegacyExchangeDN
     )) {
       foreach ($key in (Get-IdentityKeys -Value $candidate)) {
+        [void]$keys.Add($key)
+      }
+    }
+
+    foreach ($address in @($recipient.EmailAddresses)) {
+      foreach ($key in (Get-IdentityKeys -Value ([string]$address))) {
         [void]$keys.Add($key)
       }
     }
