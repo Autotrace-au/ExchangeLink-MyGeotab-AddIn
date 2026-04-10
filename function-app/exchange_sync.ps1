@@ -182,6 +182,19 @@ function Resolve-RecipientIdentity {
     }
   }
 
+  if (-not $recipient -and -not [string]::IsNullOrWhiteSpace($Identity) -and $Identity.Trim().StartsWith('/o=', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $x500Identity = "x500:$($Identity.Trim())"
+    try {
+      $recipient = Get-EXORecipient -Identity $x500Identity -ErrorAction Stop
+    } catch {
+      try {
+        $recipient = Get-Recipient -Identity $x500Identity -ErrorAction Stop
+      } catch {
+        $recipient = $null
+      }
+    }
+  }
+
   if ($recipient) {
     foreach ($candidate in @(
       $recipient.DisplayName,
@@ -757,6 +770,9 @@ function Invoke-MailboxSync {
           AllRequestOutOfPolicy    = $false
           ForwardRequestsToDelegates = $false
           BookInPolicy             = $approverList
+          RequestInPolicy          = @()
+          RequestOutOfPolicy       = @()
+          ResourceDelegates        = @()
         }
         Set-CalendarProcessing @calParams
       } else {
