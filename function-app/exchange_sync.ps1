@@ -188,6 +188,7 @@ function Resolve-RecipientIdentity {
 
   $resolvedIdentity = $Identity
   $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+  $canonicalKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
   foreach ($key in (Get-IdentityKeys -Value $Identity)) {
     [void]$keys.Add($key)
@@ -235,6 +236,19 @@ function Resolve-RecipientIdentity {
       }
     }
 
+    foreach ($candidate in @(
+      $recipient.Alias,
+      $recipient.PrimarySmtpAddress,
+      $recipient.UserPrincipalName,
+      $recipient.LegacyExchangeDN
+    )) {
+      foreach ($key in (Get-IdentityKeys -Value $candidate)) {
+        if ($key -match '^[a-z0-9._-]+$' -and $key -notmatch '^[a-f0-9]{20,}-') {
+          [void]$canonicalKeys.Add($key)
+        }
+      }
+    }
+
     if (-not [string]::IsNullOrWhiteSpace([string]$recipient.PrimarySmtpAddress)) {
       $resolvedIdentity = [string]$recipient.PrimarySmtpAddress
     } elseif (-not [string]::IsNullOrWhiteSpace([string]$recipient.UserPrincipalName)) {
@@ -244,9 +258,18 @@ function Resolve-RecipientIdentity {
     }
   }
 
+  if ($canonicalKeys.Count -eq 0) {
+    foreach ($key in $keys) {
+      if ($key -match '^[a-z0-9._-]+$' -and $key -notmatch '^[a-f0-9]{20,}-') {
+        [void]$canonicalKeys.Add($key)
+      }
+    }
+  }
+
   return @{
     Identity = $resolvedIdentity
     Keys = @($keys)
+    CanonicalKeys = @($canonicalKeys)
   }
 }
 
@@ -533,7 +556,7 @@ function Get-CalendarProcessingDifferences {
     foreach ($policyEntry in @($CalendarProcessing.BookInPolicy)) {
       $resolvedCurrentBookInPolicy += Resolve-RecipientIdentity -Identity ([string]$policyEntry)
     }
-    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $resolvedCurrentBookInPolicy
+    $currentBookInPolicyKeys = Get-IdentityKeySet -Values @($resolvedCurrentBookInPolicy | ForEach-Object { $_.CanonicalKeys })
     if (-not (Test-IdentitySetsEqual -Left $currentBookInPolicyKeys -Right $DesiredApproverKeys)) {
       $differences += 'bookInPolicy'
     }
@@ -755,7 +778,7 @@ function Invoke-MailboxSync {
     $desiredApproverKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($approver in $approverList) {
       $resolvedApprover = Resolve-RecipientIdentity -Identity $approver
-      foreach ($key in $resolvedApprover.Keys) {
+      foreach ($key in $resolvedApprover.CanonicalKeys) {
         [void]$desiredApproverKeys.Add($key)
       }
     }
