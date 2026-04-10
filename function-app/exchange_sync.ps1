@@ -238,7 +238,7 @@ function Get-IdentityKeySet {
 
   $set = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
   if ($null -eq $Values) {
-    return $set
+    return ,$set
   }
 
   if (($Values -is [System.Collections.IEnumerable]) -and -not ($Values -is [string])) {
@@ -247,32 +247,147 @@ function Get-IdentityKeySet {
         [void]$set.Add($key)
       }
     }
-    return $set
+    return ,$set
   }
 
   foreach ($key in (Get-IdentityKeys -Value $Values)) {
     [void]$set.Add($key)
   }
-  return $set
+  return ,$set
 }
 
 function Test-IdentitySetsEqual {
   param(
-    [Parameter(Mandatory = $true)]$Left,
-    [Parameter(Mandatory = $true)]$Right
+    $Left,
+    $Right
   )
 
-  if ($Left.Count -ne $Right.Count) {
+  $leftSet = Get-IdentityKeySet -Values $Left
+  $rightSet = Get-IdentityKeySet -Values $Right
+
+  if ($leftSet.Count -ne $rightSet.Count) {
     return $false
   }
 
-  foreach ($key in $Left) {
-    if (-not $Right.Contains($key)) {
+  foreach ($key in $leftSet) {
+    if (-not $rightSet.Contains($key)) {
       return $false
     }
   }
 
   return $true
+}
+
+function Get-SerialPlaceholderKey {
+  param(
+    [string]$Value
+  )
+
+  return [regex]::Replace((Normalize-Text -Value $Value -ToLower), '[^a-z0-9]+', '')
+}
+
+function Test-IsPlaceholderSerial {
+  param(
+    [string]$Serial
+  )
+
+  $placeholderKeys = @(
+    '0000000000',
+    'unknown',
+    'na',
+    'none',
+    'null'
+  )
+
+  $serialKey = Get-SerialPlaceholderKey -Value $Serial
+  if ([string]::IsNullOrWhiteSpace($serialKey)) {
+    return $false
+  }
+
+  return $placeholderKeys -contains $serialKey
+}
+
+function Get-MailboxAliasCandidate {
+  param(
+    [string]$Serial,
+    [string]$Alias,
+    [string]$PrimarySmtpAddress
+  )
+
+  $normalizedAlias = Normalize-Text -Value $Alias -ToLower
+  if (-not [string]::IsNullOrWhiteSpace($normalizedAlias)) {
+    return $normalizedAlias
+  }
+
+  $normalizedSerial = Normalize-Text -Value $Serial -ToLower
+  if (-not [string]::IsNullOrWhiteSpace($normalizedSerial)) {
+    return $normalizedSerial
+  }
+
+  $normalizedPrimarySmtpAddress = Normalize-Text -Value $PrimarySmtpAddress -ToLower
+  if ($normalizedPrimarySmtpAddress.Contains('@')) {
+    return $normalizedPrimarySmtpAddress.Split('@')[0]
+  }
+
+  return ''
+}
+
+function Test-IsValidMailboxAliasCandidate {
+  param(
+    [string]$AliasCandidate
+  )
+
+  $normalized = Normalize-Text -Value $AliasCandidate -ToLower
+  if ([string]::IsNullOrWhiteSpace($normalized)) {
+    return $false
+  }
+
+  if ($normalized.Contains('@') -or $normalized.StartsWith('.') -or $normalized.EndsWith('.') -or $normalized.Contains('..')) {
+    return $false
+  }
+
+  if ($normalized -notmatch '^[a-z0-9!#$%&''*+\-/=?^_`{|}~.]+$') {
+    return $false
+  }
+
+  return ($normalized -match '[a-z0-9]')
+}
+
+function Test-TimeZoneMatchesDesired {
+  param(
+    $RegionalConfiguration,
+    [string]$DesiredTimeZone
+  )
+
+  $currentTimeZone = Normalize-Text -Value ($RegionalConfiguration.TimeZone)
+  $desired = Normalize-Text -Value $DesiredTimeZone
+
+  if ($currentTimeZone -eq $desired) {
+    return $true
+  }
+
+  if ([string]::IsNullOrWhiteSpace($currentTimeZone) -or [string]::IsNullOrWhiteSpace($desired)) {
+    return $false
+  }
+
+  try {
+    $timeZoneInfo = [System.TimeZoneInfo]::FindSystemTimeZoneById($desired)
+  } catch {
+    return $false
+  }
+
+  foreach ($candidate in @(
+    $timeZoneInfo.Id,
+    $timeZoneInfo.DisplayName,
+    $timeZoneInfo.StandardName,
+    $timeZoneInfo.DaylightName
+  )) {
+    if ((Normalize-Text -Value $candidate) -eq $currentTimeZone) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Get-RegionalLanguageCode {
@@ -310,7 +425,7 @@ function Test-IsEditorPermission {
     $accessRights = @($Permission.AccessRights | ForEach-Object { Normalize-Text -Value ([string]$_) })
   }
 
-  return ($accessRights.Count -eq 1 -and $accessRights[0] -eq 'Editor')
+  return ($accessRights -contains 'Editor')
 }
 
 function Test-CalendarProcessingNeedsUpdate {
@@ -411,6 +526,22 @@ function Invoke-MailboxSync {
   $deviceId = [string]($Item.deviceId ?? '')
   $serial = [string]($Item.serial ?? '')
   $vehicleName = [string]($Item.vehicleName ?? $displayName)
+  $aliasCandidate = Get-MailboxAliasCandidate -Serial $serial -Alias $alias -PrimarySmtpAddress $primarySmtpAddress
+
+  if ((-not [string]::IsNullOrWhiteSpace($serial) -and (Test-IsPlaceholderSerial -Serial $serial)) -or
+      (-not (Test-IsValidMailboxAliasCandidate -AliasCandidate $aliasCandidate))) {
+    return @{
+      success = $true
+      message = 'Skipped invalid or placeholder serial'
+      found = $false
+      skipped = $true
+      primarySmtpAddress = $primarySmtpAddress
+      alias = $alias
+      deviceId = $deviceId
+      serial = $serial
+      vehicleName = $vehicleName
+    }
+  }
 
   try {
     $mailbox = Get-EXOMailbox -Identity $primarySmtpAddress -ErrorAction SilentlyContinue
@@ -471,7 +602,7 @@ function Invoke-MailboxSync {
 
     $regionalConfiguration = Get-MailboxRegionalConfiguration -Identity $mailboxIdentity -ErrorAction SilentlyContinue
     $regionalConfigUpdated = $false
-    if ((Normalize-Text -Value ($regionalConfiguration.TimeZone)) -ne (Normalize-Text -Value $timeZone) -or
+    if (-not (Test-TimeZoneMatchesDesired -RegionalConfiguration $regionalConfiguration -DesiredTimeZone $timeZone) -or
         (Get-RegionalLanguageCode -RegionalConfiguration $regionalConfiguration) -ne (Normalize-Text -Value $language -ToLower)) {
       Set-MailboxRegionalConfiguration -Identity $mailboxIdentity -TimeZone $timeZone -Language $language
       $regionalConfigUpdated = $true
