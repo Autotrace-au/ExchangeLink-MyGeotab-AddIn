@@ -231,6 +231,35 @@ function Normalize-Text {
   return $trimmed
 }
 
+function Resolve-ExchangeTimeZoneId {
+  param(
+    [string]$TimeZoneId
+  )
+
+  $normalized = Normalize-Text -Value $TimeZoneId
+  if ([string]::IsNullOrWhiteSpace($normalized)) {
+    return ''
+  }
+
+  $knownMappings = @{
+    'Australia/Adelaide' = 'Cen. Australia Standard Time'
+    'Australia/Broken_Hill' = 'Cen. Australia Standard Time'
+    'Australia/Darwin' = 'AUS Central Standard Time'
+    'Australia/Brisbane' = 'E. Australia Standard Time'
+    'Australia/Sydney' = 'AUS Eastern Standard Time'
+    'Australia/Melbourne' = 'AUS Eastern Standard Time'
+    'Australia/Hobart' = 'Tasmania Standard Time'
+    'Australia/Perth' = 'W. Australia Standard Time'
+    'UTC' = 'UTC'
+  }
+
+  if ($knownMappings.ContainsKey($normalized)) {
+    return $knownMappings[$normalized]
+  }
+
+  return $normalized
+}
+
 function Get-IdentityKeySet {
   param(
     $Values
@@ -463,7 +492,11 @@ function Get-CalendarProcessingDifferences {
       $differences += 'resourceDelegates'
     }
 
-    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy
+    $resolvedCurrentBookInPolicy = @()
+    foreach ($policyEntry in @($CalendarProcessing.BookInPolicy)) {
+      $resolvedCurrentBookInPolicy += Resolve-RecipientIdentity -Identity ([string]$policyEntry)
+    }
+    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $resolvedCurrentBookInPolicy
     if (-not (Test-IdentitySetsEqual -Left $currentBookInPolicyKeys -Right $DesiredApproverKeys)) {
       $differences += 'bookInPolicy'
     }
@@ -566,7 +599,7 @@ function Invoke-MailboxSync {
   $primarySmtpAddress = [string]($Item.primarySmtpAddress ?? '')
   $alias = [string]($Item.alias ?? '')
   $displayName = [string]($Item.displayName ?? '')
-  $timeZone = [string]($Item.timeZone ?? $TimeZone)
+  $timeZone = Resolve-ExchangeTimeZoneId -TimeZoneId ([string]($Item.timeZone ?? $TimeZone))
   $language = [string]($Item.language ?? $Language)
   $bookableValue = To-Bool -Value ([string]($Item.bookable ?? $Bookable)) -Default $false
   $allowConflictsValue = To-Bool -Value ([string]($Item.allowConflicts ?? $AllowConflicts)) -Default $false
@@ -721,6 +754,8 @@ function Invoke-MailboxSync {
           AllowRecurringMeetings   = $allowRecurringMeetingsValue
           AllBookInPolicy          = $true
           AllRequestInPolicy       = $false
+          AllRequestOutOfPolicy    = $false
+          ForwardRequestsToDelegates = $false
           BookInPolicy             = $approverList
         }
         Set-CalendarProcessing @calParams
