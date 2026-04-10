@@ -359,6 +359,21 @@ function Test-TimeZoneMatchesDesired {
     [string]$DesiredTimeZone
   )
 
+  function Normalize-TimeZoneLabel {
+    param(
+      [string]$Value
+    )
+
+    $normalized = Normalize-Text -Value $Value -ToLower
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+      return ''
+    }
+
+    $normalized = [regex]::Replace($normalized, '^\(utc[^\)]*\)\s*', '')
+    $normalized = [regex]::Replace($normalized, '[^a-z0-9]+', ' ')
+    return $normalized.Trim()
+  }
+
   $currentTimeZone = Normalize-Text -Value ($RegionalConfiguration.TimeZone)
   $desired = Normalize-Text -Value $DesiredTimeZone
 
@@ -385,9 +400,103 @@ function Test-TimeZoneMatchesDesired {
     if ((Normalize-Text -Value $candidate) -eq $currentTimeZone) {
       return $true
     }
+    if ((Normalize-TimeZoneLabel -Value $candidate) -eq (Normalize-TimeZoneLabel -Value $currentTimeZone)) {
+      return $true
+    }
   }
 
   return $false
+}
+
+function Get-CalendarProcessingDifferences {
+  param(
+    $CalendarProcessing,
+    [bool]$BookableValue,
+    [bool]$AllowConflictsValue,
+    [int]$BookingWindowInDaysValue,
+    [int]$MaximumDurationInMinutesValue,
+    [bool]$AllowRecurringMeetingsValue,
+    $DesiredApproverKeys
+  )
+
+  $differences = @()
+  if ($null -eq $CalendarProcessing) {
+    return @('missing')
+  }
+
+  if ((Normalize-Text -Value ([string]$CalendarProcessing.AutomateProcessing)) -ne 'AutoAccept') {
+    $differences += 'automateProcessing'
+  }
+
+  if ($BookableValue) {
+    if ([bool]$CalendarProcessing.AllowConflicts -ne $AllowConflictsValue) {
+      $differences += 'allowConflicts'
+    }
+    if ([int]$CalendarProcessing.BookingWindowInDays -ne $BookingWindowInDaysValue) {
+      $differences += 'bookingWindowInDays'
+    }
+    if ([int]$CalendarProcessing.MaximumDurationInMinutes -ne $MaximumDurationInMinutesValue) {
+      $differences += 'maximumDurationInMinutes'
+    }
+    if ([bool]$CalendarProcessing.AllowRecurringMeetings -ne $AllowRecurringMeetingsValue) {
+      $differences += 'allowRecurringMeetings'
+    }
+    if (-not [bool]$CalendarProcessing.AllBookInPolicy) {
+      $differences += 'allBookInPolicy'
+    }
+    if ([bool]$CalendarProcessing.AllRequestInPolicy) {
+      $differences += 'allRequestInPolicy'
+    }
+    if ([bool]$CalendarProcessing.AllRequestOutOfPolicy) {
+      $differences += 'allRequestOutOfPolicy'
+    }
+    if ([bool]$CalendarProcessing.ForwardRequestsToDelegates) {
+      $differences += 'forwardRequestsToDelegates'
+    }
+    if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestInPolicy).Count -gt 0) {
+      $differences += 'requestInPolicy'
+    }
+    if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestOutOfPolicy).Count -gt 0) {
+      $differences += 'requestOutOfPolicy'
+    }
+    if ((Get-IdentityKeySet -Values $CalendarProcessing.ResourceDelegates).Count -gt 0) {
+      $differences += 'resourceDelegates'
+    }
+
+    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy
+    if (-not (Test-IdentitySetsEqual -Left $currentBookInPolicyKeys -Right $DesiredApproverKeys)) {
+      $differences += 'bookInPolicy'
+    }
+
+    return @($differences | Select-Object -Unique)
+  }
+
+  if ([bool]$CalendarProcessing.AllBookInPolicy) {
+    $differences += 'allBookInPolicy'
+  }
+  if ([bool]$CalendarProcessing.AllRequestInPolicy) {
+    $differences += 'allRequestInPolicy'
+  }
+  if ([bool]$CalendarProcessing.AllRequestOutOfPolicy) {
+    $differences += 'allRequestOutOfPolicy'
+  }
+  if ([bool]$CalendarProcessing.ForwardRequestsToDelegates) {
+    $differences += 'forwardRequestsToDelegates'
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy).Count -gt 0) {
+    $differences += 'bookInPolicy'
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestInPolicy).Count -gt 0) {
+    $differences += 'requestInPolicy'
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestOutOfPolicy).Count -gt 0) {
+    $differences += 'requestOutOfPolicy'
+  }
+  if ((Get-IdentityKeySet -Values $CalendarProcessing.ResourceDelegates).Count -gt 0) {
+    $differences += 'resourceDelegates'
+  }
+
+  return @($differences | Select-Object -Unique)
 }
 
 function Get-RegionalLanguageCode {
@@ -439,68 +548,14 @@ function Test-CalendarProcessingNeedsUpdate {
     $DesiredApproverKeys
   )
 
-  if ($null -eq $CalendarProcessing) {
-    return $true
-  }
-
-  if ((Normalize-Text -Value ([string]$CalendarProcessing.AutomateProcessing)) -ne 'AutoAccept') {
-    return $true
-  }
-
-  if ($BookableValue) {
-    if ([bool]$CalendarProcessing.AllowConflicts -ne $AllowConflictsValue) {
-      return $true
-    }
-    if ([int]$CalendarProcessing.BookingWindowInDays -ne $BookingWindowInDaysValue) {
-      return $true
-    }
-    if ([int]$CalendarProcessing.MaximumDurationInMinutes -ne $MaximumDurationInMinutesValue) {
-      return $true
-    }
-    if ([bool]$CalendarProcessing.AllowRecurringMeetings -ne $AllowRecurringMeetingsValue) {
-      return $true
-    }
-    if (-not [bool]$CalendarProcessing.AllBookInPolicy) {
-      return $true
-    }
-    if ([bool]$CalendarProcessing.AllRequestInPolicy) {
-      return $true
-    }
-
-    $currentBookInPolicyKeys = Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy
-    if (-not (Test-IdentitySetsEqual -Left $currentBookInPolicyKeys -Right $DesiredApproverKeys)) {
-      return $true
-    }
-
-    return $false
-  }
-
-  if ([bool]$CalendarProcessing.AllBookInPolicy) {
-    return $true
-  }
-  if ([bool]$CalendarProcessing.AllRequestInPolicy) {
-    return $true
-  }
-  if ([bool]$CalendarProcessing.AllRequestOutOfPolicy) {
-    return $true
-  }
-  if ([bool]$CalendarProcessing.ForwardRequestsToDelegates) {
-    return $true
-  }
-  if ((Get-IdentityKeySet -Values $CalendarProcessing.BookInPolicy).Count -gt 0) {
-    return $true
-  }
-  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestInPolicy).Count -gt 0) {
-    return $true
-  }
-  if ((Get-IdentityKeySet -Values $CalendarProcessing.RequestOutOfPolicy).Count -gt 0) {
-    return $true
-  }
-  if ((Get-IdentityKeySet -Values $CalendarProcessing.ResourceDelegates).Count -gt 0) {
-    return $true
-  }
-
-  return $false
+  return ((Get-CalendarProcessingDifferences `
+    -CalendarProcessing $CalendarProcessing `
+    -BookableValue $BookableValue `
+    -AllowConflictsValue $AllowConflictsValue `
+    -BookingWindowInDaysValue $BookingWindowInDaysValue `
+    -MaximumDurationInMinutesValue $MaximumDurationInMinutesValue `
+    -AllowRecurringMeetingsValue $AllowRecurringMeetingsValue `
+    -DesiredApproverKeys $DesiredApproverKeys).Count -gt 0)
 }
 
 function Invoke-MailboxSync {
@@ -562,11 +617,15 @@ function Invoke-MailboxSync {
       }
     }
 
-    $wasHidden = $mailbox.HiddenFromAddressListsEnabled
     $mailboxIdentity = $mailbox.UserPrincipalName
     if ([string]::IsNullOrWhiteSpace($mailboxIdentity)) {
       $mailboxIdentity = $mailbox.PrimarySmtpAddress
     }
+    $mailboxDetails = Get-Mailbox -Identity $mailboxIdentity -ErrorAction SilentlyContinue
+    if (-not $mailboxDetails) {
+      $mailboxDetails = $mailbox
+    }
+    $wasHidden = [bool]$mailboxDetails.HiddenFromAddressListsEnabled
 
     $mailboxUpdated = $false
     $mailboxChangedFields = @()
@@ -595,8 +654,8 @@ function Invoke-MailboxSync {
       $mailboxChangedFields += 'hiddenFromAddressListsEnabled'
     }
     if (-not [string]::IsNullOrWhiteSpace($vinValue) -or -not [string]::IsNullOrWhiteSpace($licensePlateValue)) {
-      if ((Normalize-Text -Value $mailbox.CustomAttribute1) -ne (Normalize-Text -Value $vinValue) -or
-          (Normalize-Text -Value $mailbox.CustomAttribute2) -ne (Normalize-Text -Value $licensePlateValue)) {
+      if ((Normalize-Text -Value $mailboxDetails.CustomAttribute1) -ne (Normalize-Text -Value $vinValue) -or
+          (Normalize-Text -Value $mailboxDetails.CustomAttribute2) -ne (Normalize-Text -Value $licensePlateValue)) {
         $setMailboxParams.CustomAttribute1 = $vinValue
         $setMailboxParams.CustomAttribute2 = $licensePlateValue
         $mailboxChangedFields += @('customAttribute1', 'customAttribute2')
@@ -633,7 +692,16 @@ function Invoke-MailboxSync {
 
     $calendarProcessing = Get-CalendarProcessing -Identity $mailboxIdentity -ErrorAction SilentlyContinue
     $calendarProcessingUpdated = $false
-    $calendarProcessingChangedFields = @()
+    $calendarProcessingChangedFields = @(
+      Get-CalendarProcessingDifferences `
+        -CalendarProcessing $calendarProcessing `
+        -BookableValue $bookableValue `
+        -AllowConflictsValue $allowConflictsValue `
+        -BookingWindowInDaysValue $bookingWindowInDaysValue `
+        -MaximumDurationInMinutesValue $maximumDurationInMinutesValue `
+        -AllowRecurringMeetingsValue $allowRecurringMeetingsValue `
+        -DesiredApproverKeys $desiredApproverKeys
+    )
 
     if (Test-CalendarProcessingNeedsUpdate `
       -CalendarProcessing $calendarProcessing `
@@ -643,7 +711,6 @@ function Invoke-MailboxSync {
       -MaximumDurationInMinutesValue $maximumDurationInMinutesValue `
       -AllowRecurringMeetingsValue $allowRecurringMeetingsValue `
       -DesiredApproverKeys $desiredApproverKeys) {
-      $calendarProcessingChangedFields += 'policy'
       if ($bookableValue) {
         $calParams = @{
           Identity                 = $mailboxIdentity
@@ -804,6 +871,12 @@ function Invoke-MailboxSync {
         regionalConfigChangedFields = @()
         calendarProcessingChangedFields = @()
         managerPermissionChanges = @()
+        mailboxCurrentValues = @{}
+        mailboxDesiredValues = @{}
+        regionalConfigurationCurrentValues = @{}
+        regionalConfigurationDesiredValues = @{}
+        calendarProcessingCurrentValues = @{}
+        calendarProcessingDesiredValues = @{}
         deviceId = $deviceId
         serial = $serial
         vehicleName = $vehicleName
@@ -828,6 +901,54 @@ function Invoke-MailboxSync {
       regionalConfigChangedFields = @($regionalConfigChangedFields | Select-Object -Unique)
       calendarProcessingChangedFields = @($calendarProcessingChangedFields | Select-Object -Unique)
       managerPermissionChanges = @($managerPermissionChanges | Select-Object -Unique)
+      mailboxCurrentValues = @{
+        hiddenFromAddressListsEnabled = [bool]$mailboxDetails.HiddenFromAddressListsEnabled
+        customAttribute1 = [string]($mailboxDetails.CustomAttribute1 ?? '')
+        customAttribute2 = [string]($mailboxDetails.CustomAttribute2 ?? '')
+      }
+      mailboxDesiredValues = @{
+        hiddenFromAddressListsEnabled = [bool](-not $bookableValue)
+        customAttribute1 = $vinValue
+        customAttribute2 = $licensePlateValue
+      }
+      regionalConfigurationCurrentValues = @{
+        timeZone = Normalize-Text -Value ($regionalConfiguration.TimeZone)
+        language = Get-RegionalLanguageCode -RegionalConfiguration $regionalConfiguration
+      }
+      regionalConfigurationDesiredValues = @{
+        timeZone = Normalize-Text -Value $timeZone
+        language = Normalize-Text -Value $language -ToLower
+      }
+      calendarProcessingCurrentValues = @{
+        automateProcessing = Normalize-Text -Value ([string]$calendarProcessing.AutomateProcessing)
+        allowConflicts = [bool]$calendarProcessing.AllowConflicts
+        bookingWindowInDays = [int]($calendarProcessing.BookingWindowInDays ?? 0)
+        maximumDurationInMinutes = [int]($calendarProcessing.MaximumDurationInMinutes ?? 0)
+        allowRecurringMeetings = [bool]$calendarProcessing.AllowRecurringMeetings
+        allBookInPolicy = [bool]$calendarProcessing.AllBookInPolicy
+        allRequestInPolicy = [bool]$calendarProcessing.AllRequestInPolicy
+        allRequestOutOfPolicy = [bool]$calendarProcessing.AllRequestOutOfPolicy
+        forwardRequestsToDelegates = [bool]$calendarProcessing.ForwardRequestsToDelegates
+        bookInPolicyKeys = @((Get-IdentityKeySet -Values $calendarProcessing.BookInPolicy))
+        requestInPolicyKeys = @((Get-IdentityKeySet -Values $calendarProcessing.RequestInPolicy))
+        requestOutOfPolicyKeys = @((Get-IdentityKeySet -Values $calendarProcessing.RequestOutOfPolicy))
+        resourceDelegatesKeys = @((Get-IdentityKeySet -Values $calendarProcessing.ResourceDelegates))
+      }
+      calendarProcessingDesiredValues = @{
+        automateProcessing = 'AutoAccept'
+        allowConflicts = [bool]$allowConflictsValue
+        bookingWindowInDays = [int]$bookingWindowInDaysValue
+        maximumDurationInMinutes = [int]$maximumDurationInMinutesValue
+        allowRecurringMeetings = [bool]$allowRecurringMeetingsValue
+        allBookInPolicy = [bool]$bookableValue
+        allRequestInPolicy = $false
+        allRequestOutOfPolicy = $false
+        forwardRequestsToDelegates = $false
+        bookInPolicyKeys = @($desiredApproverKeys)
+        requestInPolicyKeys = @()
+        requestOutOfPolicyKeys = @()
+        resourceDelegatesKeys = @()
+      }
       deviceId = $deviceId
       serial = $serial
       vehicleName = $vehicleName
