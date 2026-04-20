@@ -421,7 +421,7 @@ def update_mygeotab_device_properties(device_identifier: str, properties: dict[s
     property_updates, missing_keys = build_device_custom_property_updates(device, properties, property_lookup)
 
     if not property_updates:
-        raise RuntimeError("No valid FleetBridge property definitions were found for the requested update")
+        raise RuntimeError("No valid ExchangeLink property definitions were found for the requested update")
 
     api.set("Device", {"id": device["id"], "customProperties": property_updates})
 
@@ -882,7 +882,7 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
         {
             "status": "healthy",
             "timestamp": utc_now_iso(),
-            "service": "fleetbridge",
+            "service": "exchangelink",
             "config": service_config_summary(),
         }
     )

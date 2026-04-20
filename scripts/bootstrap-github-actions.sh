@@ -6,7 +6,7 @@ if [ "$#" -ne 8 ]; then
   echo "Usage: $0 <github-repo> <subscription-id> <exchange-app-id> <mygeotab-database> <mygeotab-username> <mygeotab-password> <equipment-domain> <exchange-cert-display-name>"
   echo ""
   echo "Example:"
-  echo "  $0 Autotrace-au/FleetBridge-MyGeotab-AddIn <subscription-id> <exchange-app-id> goac admin@example.com 'secret' garageofawesome.com.au fleetbridge-gha-cert"
+  echo "  $0 Autotrace-au/ExchangeLink-MyGeotab-AddIn <subscription-id> <exchange-app-id> goac admin@example.com 'secret' garageofawesome.com.au exchangelink-gha-cert"
   exit 1
 fi
 
@@ -21,7 +21,7 @@ EXCHANGE_CERT_DISPLAY_NAME="$8"
 
 TENANT_ID="$(az account show --query tenantId -o tsv)"
 SUBSCRIPTION_SCOPE="/subscriptions/${SUBSCRIPTION_ID}"
-DEPLOY_APP_NAME="FleetBridge GitHub Actions"
+DEPLOY_APP_NAME="ExchangeLink GitHub Actions"
 FEDERATED_CREDENTIAL_NAME="github-main"
 TEMP_DIR="$(mktemp -d)"
 CERT_PATH="${TEMP_DIR}/exchange-gha-cert.pfx"

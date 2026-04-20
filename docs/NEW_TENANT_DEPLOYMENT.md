@@ -16,7 +16,7 @@ The client should be able to:
 Run:
 
 ```bash
-EXCHANGE_APP_NAME="FleetBridge Exchange Runtime"
+EXCHANGE_APP_NAME="ExchangeLink Exchange Runtime"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
 EXCHANGE_APP_ID="$(az ad app create \
   --display-name "${EXCHANGE_APP_NAME}" \
@@ -45,7 +45,7 @@ For each equipment mailbox:
 
 ## Step 3: Prepare the MyGeotab service account
 
-Confirm the FleetBridge MyGeotab account can:
+Confirm the ExchangeLink MyGeotab account can:
 
 - read devices
 - read custom properties
@@ -71,7 +71,7 @@ bash ./scripts/bootstrap-github-actions.sh \
   "<mygeotab-username>" \
   "<mygeotab-password>" \
   "<equipment-domain>" \
-  "FleetBridge Exchange Runtime"
+  "ExchangeLink Exchange Runtime"
 ```
 
 This script:
@@ -107,7 +107,7 @@ Set these GitHub repository variables in the fork:
 
 Recommended starter values:
 
-- `FUNCTION_IMAGE_REPOSITORY`: `fleetbridge-function`
+- `FUNCTION_IMAGE_REPOSITORY`: `exchangelink-function`
 - `CONTAINER_APP_MAX_REPLICAS`: `3`
 - `CONTAINER_CPU`: `0.5`
 - `CONTAINER_MEMORY`: `1.0Gi`

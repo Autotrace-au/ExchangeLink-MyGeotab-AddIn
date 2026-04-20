@@ -2,7 +2,7 @@
 
 ## Deployment Target
 
-FleetBridge is deployed as a single-tenant Azure Container Apps environment.
+ExchangeLink is deployed as a single-tenant Azure Container Apps environment.
 
 The active deployment target includes:
 
@@ -57,12 +57,12 @@ The runtime uses Container App secrets and environment variables directly. There
 
 ## Main Workflow
 
-- [deploy-single-tenant.yml](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/.github/workflows/deploy-single-tenant.yml)
+- [deploy-single-tenant.yml](../.github/workflows/deploy-single-tenant.yml)
 
 The workflow:
 
 1. signs into Azure with GitHub OIDC
-2. deploys the Azure resources from [main.bicep](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/infra/main.bicep)
+2. deploys the Azure resources from [main.bicep](../infra/main.bicep)
 3. builds and pushes the backend image
 4. redeploys the Container App with the current image tag
 5. smoke-tests `/api/health`

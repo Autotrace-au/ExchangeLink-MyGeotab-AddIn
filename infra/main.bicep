@@ -7,7 +7,7 @@ param location string = resourceGroup().location
 param environmentName string = 'prod'
 
 @description('Base application name used in resource naming.')
-param appName string = 'fleetbridge'
+param appName string = 'exchangelink'
 
 @description('Storage account name for the backend.')
 param storageAccountName string
@@ -25,7 +25,7 @@ param containerRegistryPullIdentityName string = '${appName}-${environmentName}-
 param containerRegistryName string
 
 @description('Repository name for the backend container image.')
-param functionImageRepository string = 'fleetbridge-function'
+param functionImageRepository string = 'exchangelink-function'
 
 @description('Container image tag for the backend.')
 param functionImageTag string = 'latest'
@@ -192,7 +192,7 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = if (deployConta
     template: {
       containers: [
         {
-          name: 'fleetbridge-backend'
+          name: 'exchangelink-backend'
           image: containerImage
           env: [
             {
