@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in the FleetBridge add-in, function app, deployment, or docs.
+description: Report a defect in the ExchangeLink add-in, function app, deployment, or docs.
 title: "[Bug]: "
 labels:
   - bug
@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form for reproducible defects in FleetBridge.
+        Use this form for reproducible defects in ExchangeLink.
   - type: dropdown
     id: area
     attributes:

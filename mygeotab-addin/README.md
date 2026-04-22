@@ -1,12 +1,12 @@
 # MyGeotab Add-In
 
-This folder contains the active MyGeotab Add-In used by FleetBridge.
+This folder contains the active MyGeotab Add-In used by ExchangeLink.
 
 ## Purpose
 
 The Add-In is the user-facing layer inside MyGeotab. It is responsible for:
 
-- managing FleetBridge settings in the browser
+- managing ExchangeLink settings in the browser
 - triggering sync requests to the Azure backend
 - presenting MyGeotab device and booking configuration UI
 - storing the customer-specific backend URL and group settings with browser fallback

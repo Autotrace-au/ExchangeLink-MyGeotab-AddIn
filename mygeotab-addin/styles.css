@@ -1,5 +1,5 @@
-/* Scoped CSS for MyGeotab Add-In - All selectors prefixed with #fleetSyncAddin */
-#fleetSyncAddin {
+/* Scoped CSS for MyGeotab Add-In - All selectors prefixed with #exchangeLinkAddin */
+#exchangeLinkAddin {
     /* CSS Variables scoped to the add-in */
     --primary-color: #2563eb;
     --primary-dark: #1e40af;
@@ -34,20 +34,20 @@
     box-sizing: border-box;
 }
 
-#fleetSyncAddin *,
-#fleetSyncAddin *::before,
-#fleetSyncAddin *::after {
+#exchangeLinkAddin *,
+#exchangeLinkAddin *::before,
+#exchangeLinkAddin *::after {
     box-sizing: border-box;
 }
 
-#fleetSyncAddin .container {
+#exchangeLinkAddin .container {
     max-width: 100%;
     margin: 0;
     background-color: var(--card-bg);
     min-height: 100vh;
 }
 
-#fleetSyncAddin header {
+#exchangeLinkAddin header {
     background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
     color: white;
     padding: 32px 40px;
@@ -56,7 +56,7 @@
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
-#fleetSyncAddin header::before {
+#exchangeLinkAddin header::before {
     content: '';
     position: absolute;
     top: -50%;
@@ -67,12 +67,12 @@
     border-radius: 50%;
 }
 
-#fleetSyncAddin .header-content {
+#exchangeLinkAddin .header-content {
     max-width: 900px;
     margin: 0 auto;
 }
 
-#fleetSyncAddin header h1 {
+#exchangeLinkAddin header h1 {
     font-size: 32px;
     font-weight: 700;
     margin-bottom: 8px;
@@ -80,20 +80,20 @@
     z-index: 1;
 }
 
-#fleetSyncAddin .subtitle {
+#exchangeLinkAddin .subtitle {
     font-size: 16px;
     opacity: 0.9;
     position: relative;
     z-index: 1;
 }
 
-#fleetSyncAddin .content-wrapper {
+#exchangeLinkAddin .content-wrapper {
     padding: 30px 40px;
     max-width: 900px;
     margin: 0 auto;
 }
 
-#fleetSyncAddin section {
+#exchangeLinkAddin section {
     margin-bottom: 30px;
     padding: 24px;
     background-color: var(--light-bg);
@@ -102,11 +102,11 @@
     transition: all 0.3s ease;
 }
 
-#fleetSyncAddin section:hover {
+#exchangeLinkAddin section:hover {
     box-shadow: var(--shadow-md);
 }
 
-#fleetSyncAddin section h2 {
+#exchangeLinkAddin section h2 {
     font-size: 20px;
     font-weight: 700;
     margin-bottom: 16px;
@@ -116,7 +116,7 @@
     gap: 10px;
 }
 
-#fleetSyncAddin section h2::before {
+#exchangeLinkAddin section h2::before {
     content: '';
     width: 4px;
     height: 24px;
@@ -124,18 +124,18 @@
     border-radius: 2px;
 }
 
-#fleetSyncAddin .info-text {
+#exchangeLinkAddin .info-text {
     color: var(--text-muted);
     margin-bottom: 20px;
     line-height: 1.7;
 }
 
-#fleetSyncAddin .status-section {
+#exchangeLinkAddin .status-section {
     background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
     border-color: #bae6fd;
 }
 
-#fleetSyncAddin .status-message {
+#exchangeLinkAddin .status-message {
     padding: 16px 20px;
     border-radius: 10px;
     font-weight: 500;
@@ -158,63 +158,63 @@
     }
 }
 
-#fleetSyncAddin .status-message svg {
+#exchangeLinkAddin .status-message svg {
     max-width: 20px;
     max-height: 20px;
     flex-shrink: 0;
     display: block;
 }
 
-#fleetSyncAddin .status-info {
+#exchangeLinkAddin .status-info {
     background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
     color: #1e40af;
     border: 1px solid #93c5fd;
 }
 
-#fleetSyncAddin .status-info svg {
+#exchangeLinkAddin .status-info svg {
     stroke: #1e40af;
     fill: none;
 }
 
-#fleetSyncAddin .status-success {
+#exchangeLinkAddin .status-success {
     background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
     color: #065f46;
     border: 1px solid #6ee7b7;
 }
 
-#fleetSyncAddin .status-success svg {
+#exchangeLinkAddin .status-success svg {
     stroke: #065f46;
     fill: none;
 }
 
-#fleetSyncAddin .status-warning {
+#exchangeLinkAddin .status-warning {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     color: #92400e;
     border: 1px solid #fcd34d;
 }
 
-#fleetSyncAddin .status-warning svg {
+#exchangeLinkAddin .status-warning svg {
     stroke: #92400e;
     fill: none;
 }
 
-#fleetSyncAddin .status-error {
+#exchangeLinkAddin .status-error {
     background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
     color: #991b1b;
     border: 1px solid #fca5a5;
 }
 
-#fleetSyncAddin .status-error svg {
+#exchangeLinkAddin .status-error svg {
     stroke: #991b1b;
     fill: none;
 }
 
-#fleetSyncAddin .property-list {
+#exchangeLinkAddin .property-list {
     display: grid;
     gap: 16px;
 }
 
-#fleetSyncAddin .property-item {
+#exchangeLinkAddin .property-item {
     display: flex;
     align-items: flex-start;
     padding: 20px;
@@ -225,13 +225,13 @@
     box-shadow: var(--shadow-sm);
 }
 
-#fleetSyncAddin .property-item:hover {
+#exchangeLinkAddin .property-item:hover {
     box-shadow: var(--shadow-lg);
     transform: translateY(-2px);
     border-color: var(--primary-light);
 }
 
-#fleetSyncAddin .property-icon {
+#exchangeLinkAddin .property-icon {
     width: 48px;
     height: 48px;
     margin-right: 18px;
@@ -244,32 +244,32 @@
     padding: 10px;
 }
 
-#fleetSyncAddin .property-icon svg {
+#exchangeLinkAddin .property-icon svg {
     max-width: 28px;
     max-height: 28px;
     stroke: var(--primary-color);
     display: block;
 }
 
-#fleetSyncAddin .property-details {
+#exchangeLinkAddin .property-details {
     flex: 1;
 }
 
-#fleetSyncAddin .property-details h3 {
+#exchangeLinkAddin .property-details h3 {
     font-size: 17px;
     font-weight: 600;
     margin-bottom: 8px;
     color: var(--text-color);
 }
 
-#fleetSyncAddin .property-details p {
+#exchangeLinkAddin .property-details p {
     font-size: 14px;
     color: var(--text-muted);
     margin-bottom: 12px;
     line-height: 1.6;
 }
 
-#fleetSyncAddin .property-status-badge {
+#exchangeLinkAddin .property-status-badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -283,19 +283,19 @@
     transition: all 0.2s ease;
 }
 
-#fleetSyncAddin .property-status-badge.status-exists {
+#exchangeLinkAddin .property-status-badge.status-exists {
     background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
     color: #065f46;
     border-color: #6ee7b7;
 }
 
-#fleetSyncAddin .property-status-badge.status-missing {
+#exchangeLinkAddin .property-status-badge.status-missing {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
     color: #92400e;
     border-color: #fcd34d;
 }
 
-#fleetSyncAddin .actions-section {
+#exchangeLinkAddin .actions-section {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
@@ -304,7 +304,7 @@
     border: 1px solid var(--border-color);
 }
 
-#fleetSyncAddin .btn {
+#exchangeLinkAddin .btn {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -321,14 +321,14 @@
     overflow: hidden;
 }
 
-#fleetSyncAddin .btn svg {
+#exchangeLinkAddin .btn svg {
     max-width: 18px;
     max-height: 18px;
     stroke: currentColor;
     display: block;
 }
 
-#fleetSyncAddin .btn::before {
+#exchangeLinkAddin .btn::before {
     content: '';
     position: absolute;
     top: 50%;
@@ -341,54 +341,54 @@
     transition: width 0.6s, height 0.6s;
 }
 
-#fleetSyncAddin .btn:hover:not(:disabled)::before {
+#exchangeLinkAddin .btn:hover:not(:disabled)::before {
     width: 300px;
     height: 300px;
 }
 
-#fleetSyncAddin .btn:hover:not(:disabled) {
+#exchangeLinkAddin .btn:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: var(--shadow-lg);
 }
 
-#fleetSyncAddin .btn:active:not(:disabled) {
+#exchangeLinkAddin .btn:active:not(:disabled) {
     transform: translateY(0);
 }
 
-#fleetSyncAddin .btn:disabled {
+#exchangeLinkAddin .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
     box-shadow: none;
 }
 
-#fleetSyncAddin .btn-primary {
+#exchangeLinkAddin .btn-primary {
     background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
     color: #ffffff;
 }
 
-#fleetSyncAddin .btn-primary:hover:not(:disabled) {
+#exchangeLinkAddin .btn-primary:hover:not(:disabled) {
     background: linear-gradient(135deg, var(--primary-light) 0%, var(--primary-color) 100%);
 }
 
-#fleetSyncAddin .btn-success {
+#exchangeLinkAddin .btn-success {
     background: linear-gradient(135deg, var(--success-color) 0%, var(--success-dark) 100%);
     color: #ffffff;
 }
 
-#fleetSyncAddin .btn-success:hover:not(:disabled) {
+#exchangeLinkAddin .btn-success:hover:not(:disabled) {
     background: linear-gradient(135deg, #34d399 0%, var(--success-color) 100%);
 }
 
-#fleetSyncAddin .btn-secondary {
+#exchangeLinkAddin .btn-secondary {
     background: linear-gradient(135deg, var(--secondary-color) 0%, var(--secondary-dark) 100%);
     color: #ffffff;
 }
 
-#fleetSyncAddin .btn-secondary:hover:not(:disabled) {
+#exchangeLinkAddin .btn-secondary:hover:not(:disabled) {
     background: linear-gradient(135deg, #94a3b8 0%, var(--secondary-color) 100%);
 }
 
-#fleetSyncAddin .sync-progress-panel {
+#exchangeLinkAddin .sync-progress-panel {
     margin-top: 18px;
     padding: 16px;
     background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
@@ -396,17 +396,17 @@
     border-radius: 12px;
 }
 
-#fleetSyncAddin .sync-progress-panel.is-success {
+#exchangeLinkAddin .sync-progress-panel.is-success {
     background: linear-gradient(135deg, #ecfdf5 0%, #f8fafc 100%);
     border-color: #86efac;
 }
 
-#fleetSyncAddin .sync-progress-panel.is-error {
+#exchangeLinkAddin .sync-progress-panel.is-error {
     background: linear-gradient(135deg, #fef2f2 0%, #fff7ed 100%);
     border-color: #fca5a5;
 }
 
-#fleetSyncAddin .sync-progress-header {
+#exchangeLinkAddin .sync-progress-header {
     display: flex;
     justify-content: space-between;
     gap: 16px;
@@ -414,7 +414,7 @@
     margin-bottom: 12px;
 }
 
-#fleetSyncAddin .sync-progress-stage {
+#exchangeLinkAddin .sync-progress-stage {
     font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
@@ -422,13 +422,13 @@
     color: var(--primary-dark);
 }
 
-#fleetSyncAddin .sync-progress-message {
+#exchangeLinkAddin .sync-progress-message {
     margin-top: 4px;
     font-size: 13px;
     color: var(--text-muted);
 }
 
-#fleetSyncAddin .sync-progress-percent {
+#exchangeLinkAddin .sync-progress-percent {
     font-size: 24px;
     font-weight: 800;
     color: var(--text-color);
@@ -436,14 +436,14 @@
     white-space: nowrap;
 }
 
-#fleetSyncAddin .sync-progress-track {
+#exchangeLinkAddin .sync-progress-track {
     height: 12px;
     border-radius: 999px;
     background: rgba(148, 163, 184, 0.25);
     overflow: hidden;
 }
 
-#fleetSyncAddin .sync-progress-fill {
+#exchangeLinkAddin .sync-progress-fill {
     height: 100%;
     width: 0;
     border-radius: 999px;
@@ -451,15 +451,15 @@
     transition: width 0.35s ease;
 }
 
-#fleetSyncAddin .sync-progress-panel.is-success .sync-progress-fill {
+#exchangeLinkAddin .sync-progress-panel.is-success .sync-progress-fill {
     background: linear-gradient(90deg, var(--success-dark) 0%, var(--success-color) 100%);
 }
 
-#fleetSyncAddin .sync-progress-panel.is-error .sync-progress-fill {
+#exchangeLinkAddin .sync-progress-panel.is-error .sync-progress-fill {
     background: linear-gradient(90deg, var(--error-dark) 0%, #f97316 100%);
 }
 
-#fleetSyncAddin .sync-progress-meta {
+#exchangeLinkAddin .sync-progress-meta {
     margin-top: 10px;
     display: flex;
     justify-content: space-between;
@@ -469,27 +469,27 @@
     color: var(--text-muted);
 }
 
-#fleetSyncAddin .help-section {
+#exchangeLinkAddin .help-section {
     background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
     border-color: #c4b5fd;
 }
 
-#fleetSyncAddin .help-section ul {
+#exchangeLinkAddin .help-section ul {
     margin-left: 20px;
     margin-top: 12px;
     margin-bottom: 12px;
 }
 
-#fleetSyncAddin .help-section li {
+#exchangeLinkAddin .help-section li {
     margin-bottom: 8px;
     color: var(--text-color);
 }
 
-#fleetSyncAddin .help-link {
+#exchangeLinkAddin .help-link {
     margin-top: 16px;
 }
 
-#fleetSyncAddin .help-link a {
+#exchangeLinkAddin .help-link a {
     color: var(--primary-color);
     text-decoration: none;
     font-weight: 600;
@@ -497,12 +497,12 @@
     border-bottom: 2px solid transparent;
 }
 
-#fleetSyncAddin .help-link a:hover {
+#exchangeLinkAddin .help-link a:hover {
     color: var(--primary-dark);
     border-bottom-color: var(--primary-color);
 }
 
-#fleetSyncAddin footer {
+#exchangeLinkAddin footer {
     margin-top: 0;
     padding: 24px 40px;
     border-top: 1px solid var(--border-color);
@@ -512,43 +512,43 @@
     background-color: var(--light-bg);
 }
 
-#fleetSyncAddin .footer-content {
+#exchangeLinkAddin .footer-content {
     max-width: 900px;
     margin: 0 auto;
 }
 
 @media (max-width: 768px) {
-    #fleetSyncAddin {
+    #exchangeLinkAddin {
         padding: 10px;
     }
 
-    #fleetSyncAddin header {
+    #exchangeLinkAddin header {
         padding: 30px 20px;
     }
 
-    #fleetSyncAddin .content-wrapper {
+    #exchangeLinkAddin .content-wrapper {
         padding: 20px;
     }
 
-    #fleetSyncAddin section {
+    #exchangeLinkAddin section {
         padding: 16px;
     }
 
-    #fleetSyncAddin .property-item {
+    #exchangeLinkAddin .property-item {
         flex-direction: column;
         text-align: center;
     }
 
-    #fleetSyncAddin .sync-progress-header {
+    #exchangeLinkAddin .sync-progress-header {
         flex-direction: column;
     }
 
-    #fleetSyncAddin .property-icon {
+    #exchangeLinkAddin .property-icon {
         margin-right: 0;
         margin-bottom: 12px;
     }
 
-    #fleetSyncAddin footer {
+    #exchangeLinkAddin footer {
         padding: 20px;
     }
 }

@@ -1,6 +1,6 @@
-# FleetBridge
+# ExchangeLink
 
-FleetBridge is a single-tenant, self-hosted integration between MyGeotab and Exchange Online.
+ExchangeLink is a single-tenant, self-hosted integration between MyGeotab and Exchange Online.
 
 Each client deployment is intended to follow this path:
 
@@ -17,7 +17,7 @@ Each client deployment is intended to follow this path:
 - one shared MyGeotab Add-In build
 - customer-specific backend URL entered into the Add-In
 
-FleetBridge does not create equipment mailboxes. Customer administrators create them manually in Exchange Online using the MyGeotab serial, keep them hidden initially, and FleetBridge reconciles them during sync.
+ExchangeLink does not create equipment mailboxes. Customer administrators create them manually in Exchange Online using the MyGeotab serial, keep them hidden initially, and ExchangeLink reconciles them during sync.
 
 ## Runtime
 
@@ -73,7 +73,7 @@ There is no runtime Key Vault dependency in the active deployment path.
 
 ## Main Workflow
 
-- [deploy-single-tenant.yml](/Users/sam/Git/FleetSync-MyGeotab-AddIn-1/.github/workflows/deploy-single-tenant.yml)
+- [deploy-single-tenant.yml](.github/workflows/deploy-single-tenant.yml)
 
 The workflow:
 

@@ -1,8 +1,8 @@
-# FleetBridge Architecture
+# ExchangeLink Architecture
 
 ## Scope
 
-FleetBridge is a single-tenant integration for one MyGeotab database and one Microsoft 365 tenant.
+ExchangeLink is a single-tenant integration for one MyGeotab database and one Microsoft 365 tenant.
 
 Each client deployment is intended to live in that client’s own fork, Azure subscription, and Microsoft 365 tenant.
 
@@ -12,7 +12,7 @@ Each client deployment is intended to live in that client’s own fork, Azure su
 
 The Add-In runs inside MyGeotab and is responsible for:
 
-- editing FleetBridge booking properties on assets
+- editing ExchangeLink booking properties on assets
 - saving the customer backend URL
 - starting Exchange sync jobs
 - polling sync job status and rendering results
