@@ -1,16 +1,33 @@
 # Infrastructure
 
-This directory contains the active single-tenant Azure infrastructure definition.
+This directory contains the Bicep template for the current ExchangeLink Azure deployment.
 
-Current files:
+## File
 
-- `main.bicep` for the Azure Container Apps deployment
+- [`main.bicep`](main.bicep): single-tenant Azure Container Apps infrastructure and runtime configuration
 
-The active deployment model uses:
+## What it provisions
 
-- Azure Container Apps Consumption
-- Azure Container Registry for the custom backend image
-- Azure Storage for the Azure Functions host, queue, and table state
-- direct Container App secret injection from GitHub Actions
+The template currently creates:
 
-The runtime no longer depends on Key Vault for secret resolution.
+- Storage account
+- Azure Container Registry
+- Container Apps managed environment
+- user-assigned managed identity for ACR pull
+- Container App for the backend workload
+
+## What it configures on the Container App
+
+- external HTTPS ingress
+- Functions host storage via secret-backed `AzureWebJobsStorage`
+- secret-backed MyGeotab credentials
+- secret-backed Exchange certificate material
+- non-secret runtime configuration for Exchange/MyGeotab behavior
+- scale-to-zero with configurable max replicas
+
+## Important deployment assumptions
+
+- The backend image is built separately and referenced by repository name plus tag.
+- `EXCHANGE_ORGANIZATION` is set from `EQUIPMENT_DOMAIN`.
+- The runtime is hosted as a Container App even though the codebase remains an Azure Functions project.
+- Runtime secrets are injected directly into the Container App. There is no current Key Vault dependency in the active path.
