@@ -7,10 +7,11 @@ import subprocess
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import azure.functions as func
 from azure.data.tables import TableServiceClient, UpdateMode
@@ -23,16 +24,39 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 BASE_DIR = Path(__file__).resolve().parent
 EXCHANGE_SYNC_SCRIPT = BASE_DIR / "exchange_sync.ps1"
 SYNC_JOBS_TABLE_NAME = "FleetBridgeSyncJobs"
+SYNC_CONFIG_TABLE_NAME = "FleetBridgeSyncConfig"
 SYNC_QUEUE_NAME = "fleetbridge-sync-jobs"
 SYNC_JOBS_PARTITION_KEY = "syncjobs"
+SYNC_CONFIG_PARTITION_KEY = "config"
+SYNC_SCHEDULE_ROW_KEY = "syncSchedule"
 MAX_RESULT_STORAGE_CHARS = 800_000
 PROGRESS_LINE_PREFIX = "__FLEETBRIDGE_PROGRESS__"
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age": "86400",
 }
+SCHEDULE_PRESET_EVERY_15_MINUTES = "every-15-minutes"
+SCHEDULE_PRESET_HOURLY = "hourly"
+SCHEDULE_PRESET_DAILY = "daily"
+SCHEDULE_PRESET_WEEKLY = "weekly"
+VALID_SCHEDULE_PRESETS = {
+    SCHEDULE_PRESET_EVERY_15_MINUTES,
+    SCHEDULE_PRESET_HOURLY,
+    SCHEDULE_PRESET_DAILY,
+    SCHEDULE_PRESET_WEEKLY,
+}
+WEEKDAY_NAMES = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+SCHEDULE_TRIGGER_SOURCES = {"manual", "scheduled"}
 
 PROPERTY_NAME_MAP = {
     "Enable Equipment Booking": "bookable",
@@ -121,15 +145,23 @@ def parse_json(req: func.HttpRequest) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
-def get_table_client():
+def get_table_client(table_name: str):
     connection_string = os.getenv("AzureWebJobsStorage", "")
     if not connection_string:
         raise RuntimeError("AzureWebJobsStorage is not configured")
 
     service_client = TableServiceClient.from_connection_string(connection_string)
-    service_client.create_table_if_not_exists(SYNC_JOBS_TABLE_NAME)
-    table_client = service_client.get_table_client(SYNC_JOBS_TABLE_NAME)
+    service_client.create_table_if_not_exists(table_name)
+    table_client = service_client.get_table_client(table_name)
     return table_client
+
+
+def get_jobs_table_client():
+    return get_table_client(SYNC_JOBS_TABLE_NAME)
+
+
+def get_config_table_client():
+    return get_table_client(SYNC_CONFIG_TABLE_NAME)
 
 
 def get_queue_client() -> QueueClient:
@@ -150,7 +182,7 @@ def get_queue_client() -> QueueClient:
 
 def get_job_entity(job_id: str) -> dict[str, Any] | None:
     try:
-        return get_table_client().get_entity(
+        return get_jobs_table_client().get_entity(
             partition_key=SYNC_JOBS_PARTITION_KEY,
             row_key=job_id,
         )
@@ -159,13 +191,372 @@ def get_job_entity(job_id: str) -> dict[str, Any] | None:
 
 
 def merge_job_entity(job_id: str, updates: dict[str, Any]) -> None:
-    table_client = get_table_client()
+    table_client = get_jobs_table_client()
     entity = {
         "PartitionKey": SYNC_JOBS_PARTITION_KEY,
         "RowKey": job_id,
         **updates,
     }
     table_client.upsert_entity(mode=UpdateMode.MERGE, entity=entity)
+
+
+def get_schedule_entity() -> dict[str, Any] | None:
+    try:
+        return get_config_table_client().get_entity(
+            partition_key=SYNC_CONFIG_PARTITION_KEY,
+            row_key=SYNC_SCHEDULE_ROW_KEY,
+        )
+    except Exception:
+        return None
+
+
+def merge_schedule_entity(updates: dict[str, Any]) -> None:
+    entity = {
+        "PartitionKey": SYNC_CONFIG_PARTITION_KEY,
+        "RowKey": SYNC_SCHEDULE_ROW_KEY,
+        **updates,
+    }
+    get_config_table_client().upsert_entity(mode=UpdateMode.MERGE, entity=entity)
+
+
+def default_schedule_payload() -> dict[str, Any]:
+    return {
+        "configured": False,
+        "enabled": False,
+        "preset": SCHEDULE_PRESET_DAILY,
+        "timezone": "UTC",
+        "weeklyDay": "monday",
+        "dailyTime": "09:00",
+        "nextRunAtUtc": None,
+        "lastEvaluatedAt": None,
+        "lastScheduledJobId": None,
+        "lastScheduledRunAt": None,
+        "lastCompletionAt": None,
+        "lastRunStatus": "",
+        "lastRunMessage": "",
+    }
+
+
+def parse_schedule_time(value: Any) -> tuple[int, int]:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        raise ValueError("dailyTime is required")
+
+    try:
+        parsed_time = time.fromisoformat(raw_value)
+    except ValueError as exc:
+        raise ValueError("dailyTime must be in HH:MM format") from exc
+
+    if parsed_time.second or parsed_time.microsecond:
+        raise ValueError("dailyTime must be in HH:MM format")
+
+    return parsed_time.hour, parsed_time.minute
+
+
+def normalize_schedule_timezone(value: Any) -> str:
+    timezone_name = str(value or "").strip()
+    if not timezone_name:
+        raise ValueError("timezone is required")
+
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unsupported timezone: {timezone_name}") from exc
+
+    return timezone_name
+
+
+def normalize_weekly_day(value: Any) -> str:
+    weekly_day = str(value or "").strip().lower()
+    if weekly_day not in WEEKDAY_NAMES:
+        raise ValueError(f"weeklyDay must be one of: {', '.join(WEEKDAY_NAMES)}")
+    return weekly_day
+
+
+def normalize_local_schedule_candidate(candidate: datetime) -> datetime:
+    return candidate.astimezone(timezone.utc).astimezone(candidate.tzinfo)
+
+
+def compute_next_run_at_utc(schedule: dict[str, Any], reference_time: datetime | None = None) -> str:
+    preset = str(schedule.get("preset") or "").strip()
+    if preset not in VALID_SCHEDULE_PRESETS:
+        raise ValueError(f"preset must be one of: {', '.join(sorted(VALID_SCHEDULE_PRESETS))}")
+
+    timezone_name = normalize_schedule_timezone(schedule.get("timezone"))
+    zone = ZoneInfo(timezone_name)
+    now_utc = reference_time or utc_now()
+    local_now = now_utc.astimezone(zone)
+
+    if preset == SCHEDULE_PRESET_EVERY_15_MINUTES:
+        current = local_now.replace(second=0, microsecond=0)
+        next_minute = ((current.minute // 15) + 1) * 15
+        if next_minute >= 60:
+            candidate = (current.replace(minute=0) + timedelta(hours=1)).replace(second=0, microsecond=0)
+        else:
+            candidate = current.replace(minute=next_minute, second=0, microsecond=0)
+    elif preset == SCHEDULE_PRESET_HOURLY:
+        candidate = (local_now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+    elif preset == SCHEDULE_PRESET_DAILY:
+        hour, minute = parse_schedule_time(schedule.get("dailyTime"))
+        candidate = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= local_now:
+            candidate += timedelta(days=1)
+        candidate = normalize_local_schedule_candidate(candidate)
+    else:
+        hour, minute = parse_schedule_time(schedule.get("dailyTime"))
+        target_weekday = WEEKDAY_NAMES.index(normalize_weekly_day(schedule.get("weeklyDay")))
+        days_ahead = (target_weekday - local_now.weekday()) % 7
+        candidate = (local_now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= local_now:
+            candidate += timedelta(days=7)
+        candidate = normalize_local_schedule_candidate(candidate)
+
+    return candidate.astimezone(timezone.utc).isoformat()
+
+
+def build_schedule_entity(payload: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    existing = existing or {}
+    enabled = parse_bool(payload.get("enabled"), False)
+    preset = str(payload.get("preset") or "").strip()
+    timezone_name = normalize_schedule_timezone(payload.get("timezone"))
+
+    if preset not in VALID_SCHEDULE_PRESETS:
+        raise ValueError(f"preset must be one of: {', '.join(sorted(VALID_SCHEDULE_PRESETS))}")
+
+    normalized: dict[str, Any] = {
+        "configured": True,
+        "enabled": enabled,
+        "preset": preset,
+        "timezone": timezone_name,
+        "weeklyDay": "",
+        "dailyTime": "",
+        "nextRunAtUtc": None,
+        "lastEvaluatedAt": existing.get("lastEvaluatedAt"),
+        "lastScheduledJobId": existing.get("lastScheduledJobId"),
+        "lastScheduledRunAt": existing.get("lastScheduledRunAt"),
+        "lastCompletionAt": existing.get("lastCompletionAt"),
+        "lastRunStatus": existing.get("lastRunStatus", ""),
+        "lastRunMessage": existing.get("lastRunMessage", ""),
+        "updatedAt": utc_now_iso(),
+    }
+
+    if preset in {SCHEDULE_PRESET_DAILY, SCHEDULE_PRESET_WEEKLY}:
+        hour, minute = parse_schedule_time(payload.get("dailyTime"))
+        normalized["dailyTime"] = f"{hour:02d}:{minute:02d}"
+
+    if preset == SCHEDULE_PRESET_WEEKLY:
+        normalized["weeklyDay"] = normalize_weekly_day(payload.get("weeklyDay"))
+
+    if enabled:
+        normalized["nextRunAtUtc"] = compute_next_run_at_utc(normalized)
+
+    return normalized
+
+
+def list_active_sync_jobs() -> list[dict[str, Any]]:
+    entities = get_jobs_table_client().query_entities(
+        query_filter=f"PartitionKey eq '{SYNC_JOBS_PARTITION_KEY}'"
+    )
+    return [
+        entity
+        for entity in entities
+        if str(entity.get("status") or "").lower() in {"queued", "running"}
+    ]
+
+
+def active_sync_job_summary() -> dict[str, Any] | None:
+    active_jobs = sorted(
+        list_active_sync_jobs(),
+        key=lambda entity: str(entity.get("createdAt") or ""),
+    )
+    if not active_jobs:
+        return None
+    return parse_job_entity(active_jobs[0])
+
+
+def schedule_job_summary(job_id: str | None) -> dict[str, Any] | None:
+    if not job_id:
+        return None
+    entity = get_job_entity(job_id)
+    if not entity:
+        return None
+    parsed = parse_job_entity(entity)
+    return {
+        "jobId": parsed["jobId"],
+        "status": parsed["status"],
+        "currentStage": parsed["currentStage"],
+        "triggerSource": parsed.get("triggerSource", ""),
+        "createdAt": parsed["createdAt"],
+        "startedAt": parsed["startedAt"],
+        "completedAt": parsed["completedAt"],
+        "updatedAt": parsed["updatedAt"],
+        "successful": parsed["successful"],
+        "failed": parsed["failed"],
+        "message": parsed["message"],
+        "error": parsed["error"],
+    }
+
+
+def parse_schedule_entity(entity: dict[str, Any] | None) -> dict[str, Any]:
+    base = dict(default_schedule_payload())
+    if entity:
+        base.update(
+            {
+                "configured": True,
+                "enabled": parse_bool(entity.get("enabled"), False),
+                "preset": entity.get("preset") or base["preset"],
+                "timezone": entity.get("timezone") or base["timezone"],
+                "weeklyDay": entity.get("weeklyDay") or base["weeklyDay"],
+                "dailyTime": entity.get("dailyTime") or base["dailyTime"],
+                "nextRunAtUtc": entity.get("nextRunAtUtc"),
+                "lastEvaluatedAt": entity.get("lastEvaluatedAt"),
+                "lastScheduledJobId": entity.get("lastScheduledJobId"),
+                "lastScheduledRunAt": entity.get("lastScheduledRunAt"),
+                "lastCompletionAt": entity.get("lastCompletionAt"),
+                "lastRunStatus": entity.get("lastRunStatus", ""),
+                "lastRunMessage": entity.get("lastRunMessage", ""),
+            }
+        )
+
+    base["lastScheduledJob"] = schedule_job_summary(base.get("lastScheduledJobId"))
+    base["activeSyncJob"] = active_sync_job_summary()
+    return base
+
+
+def enqueue_sync_job(request_body: dict[str, Any] | None = None, *, trigger_source: str = "manual") -> dict[str, Any]:
+    if trigger_source not in SCHEDULE_TRIGGER_SOURCES:
+        raise ValueError(f"Unsupported trigger source: {trigger_source}")
+
+    body = request_body or {}
+    job_id = uuid.uuid4().hex
+    created_at = utc_now_iso()
+    max_devices = parse_int(body.get("maxDevices", 0), 0)
+
+    merge_job_entity(
+        job_id,
+        {
+            "status": "queued",
+            "createdAt": created_at,
+            "updatedAt": created_at,
+            "currentStage": "Queued",
+            "requestedMaxDevices": max_devices,
+            "total": 0,
+            "processed": 0,
+            "successful": 0,
+            "failed": 0,
+            "percentComplete": 0,
+            "executionTimeMs": 0,
+            "message": "Sync job queued",
+            "error": "",
+            "resultsJson": "[]",
+            "resultsTruncated": False,
+            "triggerSource": trigger_source,
+        },
+    )
+
+    message_payload = json.dumps(
+        {
+            "jobId": job_id,
+            "request": body,
+            "triggerSource": trigger_source,
+        }
+    )
+    encoded_message = base64.b64encode(message_payload.encode("utf-8")).decode("utf-8")
+    get_queue_client().send_message(encoded_message)
+
+    return {
+        "success": True,
+        "accepted": True,
+        "jobId": job_id,
+        "status": "queued",
+        "currentStage": "Queued",
+        "message": "Sync job queued",
+        "statusUrl": f"/api/sync-status?jobId={job_id}",
+        "total": 0,
+        "processed": 0,
+        "successful": 0,
+        "failed": 0,
+        "percentComplete": 0,
+        "timestamp": created_at,
+        "triggerSource": trigger_source,
+        "targetModel": {
+            "mailboxLookup": "serial",
+            "displayNameSource": "vehicle-name",
+            "mailboxCreation": "manual-by-admin",
+            "visibilityChange": "first-sync",
+        },
+    }
+
+
+def run_scheduler_tick() -> dict[str, Any]:
+    now = utc_now()
+    now_iso = now.isoformat()
+    schedule_entity = get_schedule_entity()
+    schedule = parse_schedule_entity(schedule_entity)
+
+    if not schedule["configured"]:
+        return {"status": "noop", "message": "No persisted sync schedule found."}
+
+    if not schedule["enabled"]:
+        merge_schedule_entity({"lastEvaluatedAt": now_iso})
+        return {"status": "noop", "message": "Sync schedule is disabled."}
+
+    next_run_at = schedule.get("nextRunAtUtc")
+    if not next_run_at:
+        next_run_at = compute_next_run_at_utc(schedule, reference_time=now)
+        merge_schedule_entity(
+            {
+                "lastEvaluatedAt": now_iso,
+                "nextRunAtUtc": next_run_at,
+            }
+        )
+        return {"status": "noop", "message": "Schedule was missing nextRunAtUtc and has been repaired.", "nextRunAtUtc": next_run_at}
+
+    try:
+        next_run_at_dt = datetime.fromisoformat(str(next_run_at))
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid persisted nextRunAtUtc value: {next_run_at}") from exc
+
+    if next_run_at_dt > now:
+        merge_schedule_entity({"lastEvaluatedAt": now_iso})
+        return {"status": "noop", "message": "Next sync run is not due yet.", "nextRunAtUtc": next_run_at}
+
+    active_job = active_sync_job_summary()
+    next_run_after_now = compute_next_run_at_utc(schedule, reference_time=now)
+    if active_job:
+        message = f"Skipped scheduled sync because job {active_job['jobId']} is already {active_job['status']}."
+        merge_schedule_entity(
+            {
+                "lastEvaluatedAt": now_iso,
+                "nextRunAtUtc": next_run_after_now,
+                "lastRunStatus": "skipped",
+                "lastRunMessage": message,
+            }
+        )
+        return {
+            "status": "skipped",
+            "message": message,
+            "activeJobId": active_job["jobId"],
+            "nextRunAtUtc": next_run_after_now,
+        }
+
+    queued_job = enqueue_sync_job({}, trigger_source="scheduled")
+    merge_schedule_entity(
+        {
+            "lastEvaluatedAt": now_iso,
+            "lastScheduledJobId": queued_job["jobId"],
+            "lastScheduledRunAt": now_iso,
+            "nextRunAtUtc": next_run_after_now,
+            "lastRunStatus": "queued",
+            "lastRunMessage": queued_job["message"],
+        }
+    )
+    return {
+        "status": "queued",
+        "message": queued_job["message"],
+        "jobId": queued_job["jobId"],
+        "nextRunAtUtc": next_run_after_now,
+    }
 
 
 def serialize_results(results: list[dict[str, Any]]) -> tuple[str, bool]:
@@ -234,6 +625,7 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
     return {
         "jobId": entity["RowKey"],
         "status": entity.get("status", "unknown"),
+        "triggerSource": entity.get("triggerSource", "manual"),
         "createdAt": entity.get("createdAt"),
         "updatedAt": entity.get("updatedAt"),
         "startedAt": entity.get("startedAt"),
@@ -856,6 +1248,7 @@ def service_config_summary() -> dict[str, Any]:
     database_configured = bool(os.getenv("MYGEOTAB_DATABASE"))
     username_configured = bool(os.getenv("MYGEOTAB_USERNAME"))
     server_configured = bool(os.getenv("MYGEOTAB_SERVER"))
+    schedule = parse_schedule_entity(get_schedule_entity())
 
     return {
         "deploymentMode": "single-tenant",
@@ -870,6 +1263,11 @@ def service_config_summary() -> dict[str, Any]:
         "exchangeTenantConfigured": bool(os.getenv("EXCHANGE_TENANT_ID")),
         "exchangeClientConfigured": bool(os.getenv("EXCHANGE_CLIENT_ID")),
         "pwshAvailable": bool(shutil.which("pwsh")),
+        "schedulerMode": "container-app-job",
+        "schedulerHeartbeatCron": os.getenv("SCHEDULER_HEARTBEAT_CRON", "*/5 * * * *"),
+        "schedulerConfigured": schedule["configured"],
+        "schedulerEnabled": schedule["enabled"],
+        "schedulerNextRunAtUtc": schedule.get("nextRunAtUtc"),
     }
 
 
@@ -953,6 +1351,47 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
+@app.route(route="sync-schedule", methods=["GET", "PUT", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
+    if req.method == "OPTIONS":
+        return cors_preflight_response()
+
+    if req.method == "GET":
+        schedule = parse_schedule_entity(get_schedule_entity())
+        return json_response(
+            {
+                "success": True,
+                "timestamp": utc_now_iso(),
+                "schedule": schedule,
+            }
+        )
+
+    body = parse_json(req)
+    try:
+        existing = get_schedule_entity()
+        schedule_updates = build_schedule_entity(body, existing=existing)
+    except ValueError as exc:
+        return json_response(
+            {
+                "success": False,
+                "error": str(exc),
+                "timestamp": utc_now_iso(),
+            },
+            status_code=400,
+        )
+
+    merge_schedule_entity(schedule_updates)
+    schedule = parse_schedule_entity(get_schedule_entity())
+    return json_response(
+        {
+            "success": True,
+            "timestamp": utc_now_iso(),
+            "message": "Sync schedule saved",
+            "schedule": schedule,
+        }
+    )
+
+
 @app.route(route="sync-to-exchange", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
@@ -973,63 +1412,7 @@ def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400,
         )
 
-    job_id = uuid.uuid4().hex
-    created_at = utc_now_iso()
-
-    merge_job_entity(
-        job_id,
-        {
-            "status": "queued",
-            "createdAt": created_at,
-            "updatedAt": created_at,
-            "currentStage": "Queued",
-            "requestedMaxDevices": max_devices,
-            "total": 0,
-            "processed": 0,
-            "successful": 0,
-            "failed": 0,
-            "percentComplete": 0,
-            "executionTimeMs": 0,
-            "message": "Sync job queued",
-            "error": "",
-            "resultsJson": "[]",
-            "resultsTruncated": False,
-        },
-    )
-
-    message_payload = json.dumps(
-        {
-            "jobId": job_id,
-            "request": body,
-        }
-    )
-    encoded_message = base64.b64encode(message_payload.encode("utf-8")).decode("utf-8")
-    get_queue_client().send_message(encoded_message)
-
-    return json_response(
-        {
-            "success": True,
-            "accepted": True,
-            "jobId": job_id,
-            "status": "queued",
-            "currentStage": "Queued",
-            "message": "Sync job queued",
-            "statusUrl": f"/api/sync-status?jobId={job_id}",
-            "total": 0,
-            "processed": 0,
-            "successful": 0,
-            "failed": 0,
-            "percentComplete": 0,
-            "timestamp": created_at,
-            "targetModel": {
-                "mailboxLookup": "serial",
-                "displayNameSource": "vehicle-name",
-                "mailboxCreation": "manual-by-admin",
-                "visibilityChange": "first-sync",
-            },
-        },
-        status_code=202,
-    )
+    return json_response(enqueue_sync_job(body, trigger_source="manual"), status_code=202)
 
 
 @app.route(route="sync-status", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -1075,9 +1458,13 @@ def process_sync_job(msg: func.QueueMessage) -> None:
         payload = json.loads(msg.get_body().decode("utf-8"))
         job_id = payload["jobId"]
         request_body = payload.get("request", {})
+        trigger_source = str(payload.get("triggerSource") or "manual").strip().lower()
     except Exception as exc:
         logging.exception("Invalid sync job message")
         raise RuntimeError("Invalid sync job payload") from exc
+
+    if trigger_source not in SCHEDULE_TRIGGER_SOURCES:
+        trigger_source = "manual"
 
     started_at = utc_now_iso()
     merge_job_entity(
@@ -1089,6 +1476,7 @@ def process_sync_job(msg: func.QueueMessage) -> None:
             "currentStage": "Starting",
             "message": "Sync job starting",
             "error": "",
+            "triggerSource": trigger_source,
         },
     )
 
@@ -1113,8 +1501,17 @@ def process_sync_job(msg: func.QueueMessage) -> None:
                 "error": "",
                 "resultsJson": results_json,
                 "resultsTruncated": results_truncated,
+                "triggerSource": trigger_source,
             },
         )
+        if trigger_source == "scheduled":
+            merge_schedule_entity(
+                {
+                    "lastCompletionAt": completed_at,
+                    "lastRunStatus": "completed",
+                    "lastRunMessage": result["message"],
+                }
+            )
     except Exception as exc:
         logging.exception("Sync job failed jobId=%s", job_id)
         completed_at = utc_now_iso()
@@ -1127,6 +1524,15 @@ def process_sync_job(msg: func.QueueMessage) -> None:
                 "currentStage": "Failed",
                 "message": "Sync job failed",
                 "error": str(exc),
+                "triggerSource": trigger_source,
             },
         )
+        if trigger_source == "scheduled":
+            merge_schedule_entity(
+                {
+                    "lastCompletionAt": completed_at,
+                    "lastRunStatus": "failed",
+                    "lastRunMessage": str(exc),
+                }
+            )
         raise

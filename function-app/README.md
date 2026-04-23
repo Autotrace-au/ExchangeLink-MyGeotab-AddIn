@@ -5,6 +5,7 @@ This directory contains the Azure Functions backend that runs inside the Azure C
 ## Files
 
 - [`function_app.py`](function_app.py): HTTP endpoints, queue worker, job tracking, and MyGeotab/Exchange orchestration
+- [`scheduler_entrypoint.py`](scheduler_entrypoint.py): scheduled job entrypoint that evaluates the persisted auto-sync schedule
 - [`exchange_sync.ps1`](exchange_sync.ps1): PowerShell worker that talks to Exchange Online
 - [`Dockerfile`](Dockerfile): custom runtime image with Python, PowerShell, and Exchange modules
 - [`requirements.txt`](requirements.txt): Python dependencies
@@ -16,6 +17,8 @@ This directory contains the Azure Functions backend that runs inside the Azure C
 - `GET /api/health`: health and runtime configuration summary
 - `POST /api/update-device-properties`: write normalized ExchangeLink custom properties back to a MyGeotab device
 - `POST /api/sync-to-exchange`: queue an async sync job
+- `GET /api/sync-schedule`: read the tenant-wide auto-sync schedule
+- `PUT /api/sync-schedule`: save the tenant-wide auto-sync schedule
 - `GET /api/sync-status?jobId=...`: read async job state and results
 
 All HTTP endpoints currently allow anonymous access and include permissive CORS headers.
@@ -31,11 +34,17 @@ The backend currently:
 - batches device sync work and invokes PowerShell for Exchange updates
 - stores job status in Azure Table Storage
 - stores queued jobs in Azure Queue Storage
+- stores auto-sync schedule state in Azure Table Storage
+- supports a scheduled Container Apps job that can queue unattended sync runs
 
 Async jobs use:
 
 - queue: `fleetbridge-sync-jobs`
 - table: `FleetBridgeSyncJobs`
+
+Schedule state uses:
+
+- table: `FleetBridgeSyncConfig`
 
 ## Required runtime configuration
 
@@ -59,6 +68,7 @@ Non-secret values:
 - `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
 - `SYNC_MAX_WORKERS`
 - `SYNC_BATCH_SIZE`
+- `SCHEDULER_HEARTBEAT_CRON`
 
 ## Local development
 

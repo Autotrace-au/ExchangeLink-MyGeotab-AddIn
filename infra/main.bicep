@@ -15,6 +15,9 @@ param storageAccountName string
 @description('Container App name.')
 param containerAppName string = '${appName}-${environmentName}-app'
 
+@description('Container Apps scheduled job name.')
+param schedulerJobName string = '${appName}-${environmentName}-scheduler'
+
 @description('Container Apps managed environment name.')
 param containerAppEnvironmentName string = '${appName}-${environmentName}-env'
 
@@ -38,6 +41,21 @@ param containerCpu string = '0.5'
 
 @description('Container memory allocation.')
 param containerMemory string = '1.0Gi'
+
+@description('Scheduler job CPU cores.')
+param schedulerCpu string = '0.25'
+
+@description('Scheduler job memory allocation.')
+param schedulerMemory string = '0.5Gi'
+
+@description('UTC cron heartbeat for the scheduler job.')
+param schedulerHeartbeatCron string = '*/5 * * * *'
+
+@description('Maximum runtime for each scheduler job execution in seconds.')
+param schedulerReplicaTimeout int = 1800
+
+@description('Retry attempts for each scheduler job execution.')
+param schedulerReplicaRetryLimit int = 1
 
 @description('Single-tenant Exchange tenant ID.')
 param exchangeTenantId string = ''
@@ -255,6 +273,10 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = if (deployConta
               name: 'EXCHANGE_ORGANIZATION'
               value: equipmentDomain
             }
+            {
+              name: 'SCHEDULER_HEARTBEAT_CRON'
+              value: schedulerHeartbeatCron
+            }
           ]
           resources: {
             cpu: json(containerCpu)
@@ -270,7 +292,143 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = if (deployConta
   }
 }
 
+resource schedulerJob 'Microsoft.App/jobs@2024-03-01' = if (deployContainerApp) {
+  name: schedulerJobName
+  location: location
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${containerRegistryPullIdentity.id}': {}
+    }
+  }
+  dependsOn: [
+    acrPullRole
+  ]
+  properties: {
+    environmentId: managedEnvironment.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: schedulerReplicaTimeout
+      replicaRetryLimit: schedulerReplicaRetryLimit
+      scheduleTriggerConfig: {
+        cronExpression: schedulerHeartbeatCron
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          identity: containerRegistryPullIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'azurewebjobsstorage'
+          value: storageConnectionString
+        }
+        {
+          name: 'mygeotab-database'
+          value: myGeotabDatabase
+        }
+        {
+          name: 'mygeotab-username'
+          value: myGeotabUsername
+        }
+        {
+          name: 'mygeotab-password'
+          value: myGeotabPassword
+        }
+        {
+          name: 'exchange-certificate'
+          value: exchangeCertificate
+        }
+        {
+          name: 'exchange-certificate-password'
+          value: exchangeCertificatePassword
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'exchangelink-scheduler'
+          image: containerImage
+          command: [
+            'python'
+          ]
+          args: [
+            '/home/site/wwwroot/scheduler_entrypoint.py'
+          ]
+          env: [
+            {
+              name: 'AzureWebJobsStorage'
+              secretRef: 'azurewebjobsstorage'
+            }
+            {
+              name: 'MYGEOTAB_DATABASE'
+              secretRef: 'mygeotab-database'
+            }
+            {
+              name: 'MYGEOTAB_USERNAME'
+              secretRef: 'mygeotab-username'
+            }
+            {
+              name: 'MYGEOTAB_PASSWORD'
+              secretRef: 'mygeotab-password'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE'
+              secretRef: 'exchange-certificate'
+            }
+            {
+              name: 'EXCHANGE_CERTIFICATE_PASSWORD'
+              secretRef: 'exchange-certificate-password'
+            }
+            {
+              name: 'EXCHANGE_TENANT_ID'
+              value: exchangeTenantId
+            }
+            {
+              name: 'EXCHANGE_CLIENT_ID'
+              value: exchangeClientId
+            }
+            {
+              name: 'EQUIPMENT_DOMAIN'
+              value: equipmentDomain
+            }
+            {
+              name: 'DEFAULT_TIMEZONE'
+              value: defaultTimezone
+            }
+            {
+              name: 'MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC'
+              value: string(makeMailboxVisibleOnFirstSync)
+            }
+            {
+              name: 'MYGEOTAB_SERVER'
+              value: myGeotabServer
+            }
+            {
+              name: 'EXCHANGE_ORGANIZATION'
+              value: equipmentDomain
+            }
+            {
+              name: 'SCHEDULER_HEARTBEAT_CRON'
+              value: schedulerHeartbeatCron
+            }
+          ]
+          resources: {
+            cpu: json(schedulerCpu)
+            memory: schedulerMemory
+          }
+        }
+      ]
+    }
+  }
+}
+
 output containerAppName string = deployContainerApp ? containerApp!.name : ''
 output containerAppUrl string = deployContainerApp ? 'https://${containerApp!.properties.configuration.ingress.fqdn}' : ''
+output schedulerJobName string = deployContainerApp ? schedulerJob.name : ''
 output containerRegistryLoginServer string = containerRegistry.properties.loginServer
 output containerImage string = containerImage
