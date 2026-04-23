@@ -1,97 +1,121 @@
 # ExchangeLink
 
-ExchangeLink is a single-tenant, self-hosted integration between MyGeotab and Exchange Online.
+ExchangeLink is a single-tenant integration between MyGeotab and Exchange Online. It gives MyGeotab users a shared add-in for equipment booking settings and pairs that with a tenant-specific Azure backend that syncs device metadata into pre-created Exchange equipment mailboxes.
 
-Each client deployment is intended to follow this path:
+The current product shape is:
 
-1. Fork the repo
-2. Set GitHub repository variables and secrets
-3. Run the deploy workflow
-4. Enter the backend URL into the shared MyGeotab Add-In
+- one MyGeotab database per deployment
+- one Microsoft 365 tenant per deployment
+- one Azure Container Apps backend per deployment
+- one shared MyGeotab add-in build
+- one backend URL saved inside the add-in for that tenant
 
-## Active Model
+ExchangeLink does not provision equipment mailboxes. Customer admins create those mailboxes in Exchange Online first, using the MyGeotab serial as the mailbox alias or SMTP local part. ExchangeLink then updates mailbox visibility, booking settings, and display metadata during sync.
 
-- one customer MyGeotab database
-- one customer Microsoft 365 tenant
-- one Azure Container Apps backend
-- one shared MyGeotab Add-In build
-- customer-specific backend URL entered into the Add-In
+## What the app does now
 
-ExchangeLink does not create equipment mailboxes. Customer administrators create them manually in Exchange Online using the MyGeotab serial, keep them hidden initially, and ExchangeLink reconciles them during sync.
+The add-in in [`mygeotab-addin/`](mygeotab-addin/README.md) lets MyGeotab users:
 
-## Runtime
+- inspect and manage the ExchangeLink custom properties used for booking automation
+- edit booking-related settings on assets
+- save the tenant backend URL in add-in/browser storage
+- trigger Exchange sync jobs
+- poll live sync status and review per-device results
+- manage assets in bulk from the add-in UI
 
-- `mygeotab-addin/` shared Add-In source
-- `function-app/` Azure Functions code and Docker runtime used inside the Container App
-- `infra/` Bicep for the Azure Container Apps deployment
-- `scripts/` deployment bootstrap helpers
-- `.github/workflows/` GitHub Actions deployment workflows
+The backend in [`function-app/`](function-app/README.md) exposes:
 
-The backend runs on Azure Container Apps Consumption with scale-to-zero and keeps the existing custom runtime for PowerShell and `ExchangeOnlineManagement`.
+- `GET /api/health`
+- `POST /api/update-device-properties`
+- `POST /api/sync-to-exchange`
+- `GET /api/sync-status?jobId=...`
 
-## Client Setup
+Sync is asynchronous. Jobs are queued in Azure Storage, processed in the background by the Azure Functions host, and tracked in Table Storage so the add-in can poll progress without browser timeouts.
 
-The repo now uses:
+## Deployment model
 
-- GitHub repository variables for non-secret tenant configuration
-- GitHub repository secrets for credentials and certificate material
-- direct runtime secret injection into the Container App
+This repo is built for a fork-and-deploy workflow:
 
-There is no runtime Key Vault dependency in the active deployment path.
+1. Fork the repository for a customer or environment.
+2. Configure GitHub repository variables and secrets.
+3. Run the deployment workflow.
+4. Copy the deployed backend URL into the add-in.
 
-## Required GitHub Variables
+The active hosting stack is:
 
-- `RESOURCE_GROUP`
-- `AZURE_LOCATION`
-- `ENVIRONMENT_NAME`
-- `APP_NAME`
-- `STORAGE_ACCOUNT_NAME`
-- `CONTAINER_APP_NAME`
-- `CONTAINER_APP_ENVIRONMENT_NAME`
-- `CONTAINER_REGISTRY_NAME`
-- `FUNCTION_IMAGE_REPOSITORY`
-- `CONTAINER_APP_MAX_REPLICAS`
-- `CONTAINER_CPU`
-- `CONTAINER_MEMORY`
-- `EQUIPMENT_DOMAIN`
-- `EXCHANGE_TENANT_ID`
-- `EXCHANGE_CLIENT_ID`
-- `DEFAULT_TIMEZONE`
-- `MYGEOTAB_SERVER`
-- `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
+- Azure Container Apps for runtime hosting
+- Azure Container Registry for the backend image
+- Azure Storage for the Functions host, queue jobs, and job state
+- GitHub Actions with Azure OIDC for deployment
 
-## Required GitHub Secrets
+There is no active runtime Key Vault dependency in this deployment path.
 
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_SUBSCRIPTION_ID`
-- `MYGEOTAB_DATABASE`
-- `MYGEOTAB_USERNAME`
-- `MYGEOTAB_PASSWORD`
-- `EXCHANGE_PFX_BASE64`
-- `EXCHANGE_PFX_PASSWORD`
+## Repository layout
 
-## Main Workflow
+- [`mygeotab-addin/`](mygeotab-addin/README.md): shared MyGeotab add-in source
+- [`function-app/`](function-app/README.md): Azure Functions backend and Exchange sync runtime
+- [`infra/`](infra/README.md): Bicep infrastructure for the active Azure deployment
+- [`scripts/`](scripts/README.md): deployment/bootstrap helpers
+- [`.github/workflows/`](.github/workflows): deployment and PR validation workflows
+- [`docs/`](docs/README.md): architecture, deployment, and tenant runbooks
 
-- [deploy-single-tenant.yml](.github/workflows/deploy-single-tenant.yml)
+## Fast start
 
-The workflow:
+For a new tenant:
 
-1. signs into Azure with GitHub OIDC
-2. deploys the Azure resources
-3. builds and pushes the backend image
-4. redeploys the Container App with the new image tag
-5. smoke-tests `/api/health`
-6. optionally runs a one-device sync smoke test
+1. Read [`docs/NEW_TENANT_DEPLOYMENT.md`](docs/NEW_TENANT_DEPLOYMENT.md).
+2. Set the required GitHub variables and secrets described in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+3. Run [`.github/workflows/deploy-single-tenant.yml`](.github/workflows/deploy-single-tenant.yml).
+4. Open the add-in and save the deployed backend URL.
 
-## Current Status
+For contributors:
 
-The active system supports:
+1. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+2. Keep [`configuration.json`](configuration.json) and [`mygeotab-addin/configuration.json`](mygeotab-addin/configuration.json) identical.
+3. If anything under `mygeotab-addin/` changes, bump the add-in version in both manifest files.
+4. Run the local validation commands before opening a PR.
 
-- async Exchange sync jobs with status polling
-- MyGeotab device property updates from the Add-In through the backend
-- serial-based mailbox lookup
-- vehicle-name-to-display-name updates
-- GitHub Actions based client deployment
+## Local validation
 
-The repository no longer includes the retired dedicated App Service deployment path or runtime Key Vault secret loading path.
+Python syntax check:
+
+```bash
+python -m py_compile function-app/function_app.py
+```
+
+MyGeotab add-in inline script parse check:
+
+```bash
+node - <<'NODE'
+const fs = require('fs');
+const html = fs.readFileSync('mygeotab-addin/index.html', 'utf8');
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+if (!scripts.length) {
+  throw new Error('No inline scripts found in mygeotab-addin/index.html');
+}
+
+scripts.forEach((script, index) => {
+  try {
+    new Function(script);
+  } catch (error) {
+    throw new Error(`Inline script ${index} failed to parse: ${error.message}`);
+  }
+});
+NODE
+```
+
+Manifest sync and version query-string validation logic lives in [`.github/workflows/pr-code-review.yml`](.github/workflows/pr-code-review.yml).
+
+## Current expectations
+
+- Changes under `mygeotab-addin/` must include a version bump in `mygeotab-addin/configuration.json`.
+- `configuration.json` and `mygeotab-addin/configuration.json` must stay in sync.
+- PRs are scanned for secrets by [`.github/workflows/pr-secrets-review.yml`](.github/workflows/pr-secrets-review.yml).
+
+## Primary docs
+
+- [`docs/README.md`](docs/README.md)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- [`docs/NEW_TENANT_DEPLOYMENT.md`](docs/NEW_TENANT_DEPLOYMENT.md)

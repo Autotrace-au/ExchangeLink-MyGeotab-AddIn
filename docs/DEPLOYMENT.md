@@ -1,29 +1,48 @@
 # Deployment
 
-## Deployment Target
+## Hosting target
 
-ExchangeLink is deployed as a single-tenant Azure Container Apps environment.
+ExchangeLink is deployed as a single-tenant Azure Container Apps workload.
 
-The active deployment target includes:
+The active infrastructure in [`infra/main.bicep`](../infra/main.bicep) provisions:
 
-- Resource Group
-- Storage Account
+- Azure Resource Group target scope
+- Azure Storage account
 - Azure Container Registry
-- Container Apps managed environment and container app
-- managed identity for ACR pull
+- Container Apps managed environment
+- Azure Container App running the backend container
+- user-assigned managed identity for ACR pull
 
-## Deployment Model
+The Container App runs with:
 
-The active deployment model is fork-and-deploy:
+- `minReplicas: 0`
+- configurable `maxReplicas`
+- Functions host storage via `AzureWebJobsStorage`
+- direct secret injection for MyGeotab credentials and Exchange certificate material
 
-1. fork the repo
-2. configure GitHub repository variables and secrets
-3. run the deploy workflow
-4. enter the deployed backend URL into the MyGeotab Add-In
+## Deployment path
 
-The runtime uses Container App secrets and environment variables directly. There is no runtime Key Vault dependency.
+The supported deployment path is GitHub Actions plus Azure OIDC.
 
-## Required GitHub Variables
+Primary entrypoints:
+
+- [`.github/workflows/deploy-single-tenant.yml`](../.github/workflows/deploy-single-tenant.yml)
+- [`scripts/deploy-container-app.sh`](../scripts/deploy-container-app.sh)
+- [`scripts/bootstrap-github-actions.sh`](../scripts/bootstrap-github-actions.sh)
+
+Deployment sequence:
+
+1. GitHub Actions logs into Azure using OIDC.
+2. Bicep deploys the foundation resources.
+3. The backend image is built in ACR from `function-app/`.
+4. Bicep deploys or updates the Container App with that image tag.
+5. The workflow resolves the ingress FQDN.
+6. The workflow smoke-tests `GET /api/health`.
+7. Optionally, the workflow queues and polls a one-device sync test.
+
+## Required GitHub repository variables
+
+These are consumed by the deployment workflow and shell script:
 
 - `RESOURCE_GROUP`
 - `AZURE_LOCATION`
@@ -44,7 +63,22 @@ The runtime uses Container App secrets and environment variables directly. There
 - `MYGEOTAB_SERVER`
 - `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
 
-## Required GitHub Secrets
+Recommended starter values:
+
+- `FUNCTION_IMAGE_REPOSITORY`: `exchangelink-function`
+- `CONTAINER_APP_MAX_REPLICAS`: `3`
+- `CONTAINER_CPU`: `0.5`
+- `CONTAINER_MEMORY`: `1.0Gi`
+- `DEFAULT_TIMEZONE`: `AUS Eastern Standard Time`
+- `MYGEOTAB_SERVER`: `my.geotab.com`
+- `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`: `true`
+
+These names must be globally unique in Azure:
+
+- `STORAGE_ACCOUNT_NAME`
+- `CONTAINER_REGISTRY_NAME`
+
+## Required GitHub repository secrets
 
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
@@ -55,36 +89,61 @@ The runtime uses Container App secrets and environment variables directly. There
 - `EXCHANGE_PFX_BASE64`
 - `EXCHANGE_PFX_PASSWORD`
 
-## Main Workflow
+## Runtime environment injected into the Container App
 
-- [deploy-single-tenant.yml](../.github/workflows/deploy-single-tenant.yml)
+Secret-backed runtime values:
 
-The workflow:
+- `AzureWebJobsStorage`
+- `MYGEOTAB_DATABASE`
+- `MYGEOTAB_USERNAME`
+- `MYGEOTAB_PASSWORD`
+- `EXCHANGE_CERTIFICATE`
+- `EXCHANGE_CERTIFICATE_PASSWORD`
 
-1. signs into Azure with GitHub OIDC
-2. deploys the Azure resources from [main.bicep](../infra/main.bicep)
-3. builds and pushes the backend image
-4. redeploys the Container App with the current image tag
-5. smoke-tests `/api/health`
-6. optionally smoke-tests one sync job
+Non-secret runtime values:
 
-## Post-Deployment
+- `FUNCTIONS_EXTENSION_VERSION`
+- `FUNCTIONS_WORKER_RUNTIME`
+- `EXCHANGE_TENANT_ID`
+- `EXCHANGE_CLIENT_ID`
+- `EQUIPMENT_DOMAIN`
+- `DEFAULT_TIMEZONE`
+- `MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC`
+- `MYGEOTAB_SERVER`
+- `EXCHANGE_ORGANIZATION`
 
-After deployment:
+`EXCHANGE_ORGANIZATION` is currently set to the same value as `EQUIPMENT_DOMAIN`.
 
-1. confirm `GET /api/health` is healthy
-2. confirm the Exchange equipment mailboxes already exist
-3. open the MyGeotab Add-In
-4. enter and save the backend URL
-5. run a limited sync test
+## Post-deployment checklist
 
-## Smoke Test Expectations
+After the workflow succeeds:
+
+1. Resolve the backend URL from the Container App ingress FQDN.
+2. Call `GET /api/health`.
+3. Confirm the health payload reports the expected configuration.
+4. Confirm the target Exchange equipment mailboxes already exist.
+5. Open the MyGeotab add-in and save the backend URL.
+6. Run a small sync test before wider use.
+
+## Smoke-test expectations
 
 A healthy deployment should satisfy all of the following:
 
-- `GET /api/health` returns `healthy`
-- `pwshAvailable` is `true`
-- MyGeotab configuration is detected
-- Exchange tenant and client configuration are detected
-- `POST /api/sync-to-exchange` returns `202 Accepted`
-- `GET /api/sync-status` reaches `completed` for a small test batch
+- `GET /api/health` returns `status: healthy`
+- `config.backend` is `azure-container-apps`
+- `config.syncMode` is `async-job`
+- `config.pwshAvailable` is `true`
+- MyGeotab configuration flags are `true`
+- Exchange tenant and client configuration flags are `true`
+- `POST /api/sync-to-exchange` returns HTTP `202`
+- `GET /api/sync-status` reaches `completed` for a test job
+
+## Local deployment helper
+
+For manual deployment from a shell, export the same environment variables used by the workflow and run:
+
+```bash
+bash ./scripts/deploy-container-app.sh
+```
+
+This script validates required environment variables, deploys the Bicep template, builds the backend image in ACR, updates the Container App, and waits for the health endpoint.

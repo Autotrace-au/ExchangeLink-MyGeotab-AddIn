@@ -1,28 +1,59 @@
 # MyGeotab Add-In
 
-This folder contains the active MyGeotab Add-In used by ExchangeLink.
+This folder contains the shared ExchangeLink add-in that runs inside MyGeotab.
 
-## Purpose
+## What the add-in does
 
-The Add-In is the user-facing layer inside MyGeotab. It is responsible for:
+The add-in is the operator UI for the product. It currently provides:
 
-- managing ExchangeLink settings in the browser
-- triggering sync requests to the Azure backend
-- presenting MyGeotab device and booking configuration UI
-- storing the customer-specific backend URL and group settings with browser fallback
+- property setup and validation for ExchangeLink custom properties
+- asset management for Exchange booking settings
+- backend URL configuration per tenant
+- sync job triggering
+- live sync progress and result rendering
+- local persistence through MyGeotab add-in storage with browser fallback
+
+The add-in is tenant-neutral. The tenant-specific backend is selected by saving the deployed backend URL in the UI.
 
 ## Files
 
-- `index.html` main UI and JavaScript logic
-- `styles.css` Add-In styling
-- `configuration.json` MyGeotab manifest
-- `images/` icons
-- `translations/` language resources
+- [`index.html`](index.html): primary UI, styling injection, and client-side logic
+- [`styles.css`](styles.css): supporting stylesheet assets
+- [`configuration.json`](configuration.json): MyGeotab manifest used by the add-in
+- [`images/`](images): icons and visual assets
+- [`translations/`](translations): language strings
 
-## Notes
+## Important repo rules
 
-- The active backend target is Azure Container Apps
-- The shared Add-In build is tenant-neutral; each customer enters their own backend URL in the Sync tab
-- The Add-In persists settings through MyGeotab AddInData and falls back to browser localStorage
-- The repository is being simplified to a single-tenant deployment model
-- Historical backend documentation has been removed from this repository
+- If files under `mygeotab-addin/` change, bump the version in [`configuration.json`](configuration.json).
+- Keep [`../configuration.json`](../configuration.json) and [`configuration.json`](configuration.json) identical.
+- The manifest item URL must include the current version in the query string.
+
+These rules are enforced by:
+
+- [`.github/workflows/pr-code-review.yml`](../.github/workflows/pr-code-review.yml)
+- [`.github/workflows/pr-mygeotab-addin-version-review.yml`](../.github/workflows/pr-mygeotab-addin-version-review.yml)
+
+## Local validation
+
+Inline script parse check:
+
+```bash
+node - <<'NODE'
+const fs = require('fs');
+const html = fs.readFileSync('mygeotab-addin/index.html', 'utf8');
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+if (!scripts.length) {
+  throw new Error('No inline scripts found in mygeotab-addin/index.html');
+}
+
+scripts.forEach((script, index) => {
+  try {
+    new Function(script);
+  } catch (error) {
+    throw new Error(`Inline script ${index} failed to parse: ${error.message}`);
+  }
+});
+NODE
+```
