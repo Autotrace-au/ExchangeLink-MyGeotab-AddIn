@@ -63,6 +63,18 @@ jobs:
         run: |
           curl -fsS "${{ steps.resolve_url.outputs.container_app_url }}/api/health"
 
+      - name: Smoke Test Sync Schedule
+        run: |
+          PREFLIGHT_HEADERS="$(curl -fsS -i -X OPTIONS \
+            "${{ steps.resolve_url.outputs.container_app_url }}/api/sync-schedule" \
+            -H "Origin: https://my.geotab.com" \
+            -H "Access-Control-Request-Method: PUT" \
+            -H "Access-Control-Request-Headers: content-type")"
+          printf '%s' "${PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-origin: (\*|https://my\.geotab\.com)$'
+          printf '%s' "${PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-methods: .*PUT'
+          curl -fsS "${{ steps.resolve_url.outputs.container_app_url }}/api/sync-schedule" \
+            | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("success") and "schedule" in data else 1)'
+
       - name: Smoke Test Sync
         run: |
           JOB_ID="$(curl -fsS -X POST \

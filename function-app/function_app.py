@@ -354,9 +354,14 @@ def build_schedule_entity(payload: dict[str, Any], existing: dict[str, Any] | No
 
 
 def list_active_sync_jobs() -> list[dict[str, Any]]:
-    entities = get_jobs_table_client().query_entities(
-        query_filter=f"PartitionKey eq '{SYNC_JOBS_PARTITION_KEY}'"
-    )
+    try:
+        entities = get_jobs_table_client().query_entities(
+            query_filter=f"PartitionKey eq '{SYNC_JOBS_PARTITION_KEY}'"
+        )
+    except Exception:
+        logging.exception("Failed to query active sync jobs")
+        return []
+
     return [
         entity
         for entity in entities
@@ -1357,7 +1362,19 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
         return cors_preflight_response()
 
     if req.method == "GET":
-        schedule = parse_schedule_entity(get_schedule_entity())
+        try:
+            schedule = parse_schedule_entity(get_schedule_entity())
+        except Exception as error:
+            logging.exception("Failed to load sync schedule")
+            return json_response(
+                {
+                    "success": False,
+                    "error": str(error),
+                    "timestamp": utc_now_iso(),
+                },
+                status_code=500,
+            )
+
         return json_response(
             {
                 "success": True,
@@ -1380,8 +1397,20 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400,
         )
 
-    merge_schedule_entity(schedule_updates)
-    schedule = parse_schedule_entity(get_schedule_entity())
+    try:
+        merge_schedule_entity(schedule_updates)
+        schedule = parse_schedule_entity(get_schedule_entity())
+    except Exception as error:
+        logging.exception("Failed to save sync schedule")
+        return json_response(
+            {
+                "success": False,
+                "error": str(error),
+                "timestamp": utc_now_iso(),
+            },
+            status_code=500,
+        )
+
     return json_response(
         {
             "success": True,

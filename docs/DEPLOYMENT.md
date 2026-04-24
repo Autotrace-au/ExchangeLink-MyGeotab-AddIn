@@ -171,4 +171,4 @@ For manual deployment from a shell, export the same environment variables used b
 bash ./scripts/deploy-container-app.sh
 ```
 
-This script validates required environment variables, deploys the Bicep template, builds the backend image in ACR, updates the Container App, and waits for the health endpoint.
+This script validates required environment variables, deploys the Bicep template, builds the backend image in ACR, updates the Container App, and waits for the health and automatic sync schedule endpoints.
