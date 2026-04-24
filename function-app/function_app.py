@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,6 +20,13 @@ from azure.core.exceptions import ResourceExistsError
 from azure.storage.queue import QueueClient
 from mygeotab import API
 
+try:
+    import jwt
+    from jwt import PyJWKClient
+except ImportError:
+    jwt = None
+    PyJWKClient = None
+
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,12 +39,9 @@ SYNC_CONFIG_PARTITION_KEY = "config"
 SYNC_SCHEDULE_ROW_KEY = "syncSchedule"
 MAX_RESULT_STORAGE_CHARS = 800_000
 PROGRESS_LINE_PREFIX = "__FLEETBRIDGE_PROGRESS__"
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Max-Age": "86400",
-}
+CORS_METHODS = "GET, POST, PUT, OPTIONS"
+CORS_HEADERS = "Authorization, Content-Type"
+JWKS_CLIENTS: dict[str, Any] = {}
 SCHEDULE_PRESET_EVERY_15_MINUTES = "every-15-minutes"
 SCHEDULE_PRESET_HOURLY = "hourly"
 SCHEDULE_PRESET_DAILY = "daily"
@@ -57,6 +62,13 @@ WEEKDAY_NAMES = [
     "sunday",
 ]
 SCHEDULE_TRIGGER_SOURCES = {"manual", "scheduled"}
+SYNC_REQUEST_ALLOWED_FIELDS = {"maxDevices"}
+SYNC_REQUEST_BLOCKED_FIELDS = {
+    "myGeotabDatabase",
+    "myGeotabUsername",
+    "myGeotabPassword",
+    "myGeotabServer",
+}
 
 PROPERTY_NAME_MAP = {
     "Enable Equipment Booking": "bookable",
@@ -114,6 +126,33 @@ def int_setting(name: str, default: int) -> int:
         return default
 
 
+def csv_setting(name: str) -> list[str]:
+    return [
+        item.strip()
+        for item in os.getenv(name, "").split(",")
+        if item.strip()
+    ]
+
+
+def request_origin(req: func.HttpRequest | None) -> str:
+    if not req:
+        return ""
+    return str(req.headers.get("Origin") or req.headers.get("origin") or "").strip()
+
+
+def cors_response_headers(req: func.HttpRequest | None = None) -> dict[str, str]:
+    headers = {
+        "Access-Control-Allow-Methods": CORS_METHODS,
+        "Access-Control-Allow-Headers": CORS_HEADERS,
+        "Access-Control-Max-Age": "86400",
+        "Vary": "Origin",
+    }
+    origin = request_origin(req)
+    if origin and origin in set(csv_setting("ALLOWED_CORS_ORIGINS")):
+        headers["Access-Control-Allow-Origin"] = origin
+    return headers
+
+
 def chunked(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
     if size <= 0:
         return [items]
@@ -124,17 +163,18 @@ def json_response(
     payload: dict[str, Any],
     status_code: int = 200,
     headers: dict[str, str] | None = None,
+    req: func.HttpRequest | None = None,
 ) -> func.HttpResponse:
     return func.HttpResponse(
         body=json.dumps(payload),
         status_code=status_code,
         mimetype="application/json",
-        headers={**CORS_HEADERS, **(headers or {})},
+        headers={**cors_response_headers(req), **(headers or {})},
     )
 
 
-def cors_preflight_response() -> func.HttpResponse:
-    return func.HttpResponse(status_code=204, headers=CORS_HEADERS)
+def cors_preflight_response(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(status_code=204, headers=cors_response_headers(req))
 
 
 def parse_json(req: func.HttpRequest) -> dict[str, Any]:
@@ -143,6 +183,102 @@ def parse_json(req: func.HttpRequest) -> dict[str, Any]:
     except ValueError:
         body = {}
     return body if isinstance(body, dict) else {}
+
+
+def auth_error(req: func.HttpRequest, message: str, status_code: int) -> func.HttpResponse:
+    return json_response(
+        {
+            "success": False,
+            "error": message,
+            "timestamp": utc_now_iso(),
+        },
+        status_code=status_code,
+        req=req,
+    )
+
+
+def entra_issuer() -> str:
+    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
+    return f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+
+
+def jwks_url() -> str:
+    return f"{entra_issuer()}/discovery/v2.0/keys"
+
+
+def accepted_entra_issuers() -> set[str]:
+    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
+    return {
+        f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+        f"https://sts.windows.net/{tenant_id}/",
+    }
+
+
+def bearer_token(req: func.HttpRequest) -> str:
+    authorization = str(req.headers.get("Authorization") or req.headers.get("authorization") or "").strip()
+    if not authorization.lower().startswith("bearer "):
+        return ""
+    return authorization.split(" ", 1)[1].strip()
+
+
+def decode_entra_token(token: str) -> dict[str, Any]:
+    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
+    audience = os.getenv("ENTRA_API_AUDIENCE", "").strip()
+    if not tenant_id or not audience:
+        raise RuntimeError("ENTRA_TENANT_ID and ENTRA_API_AUDIENCE must be configured")
+    if jwt is None or PyJWKClient is None:
+        raise RuntimeError("PyJWT is not installed in the backend runtime")
+
+    issuer = entra_issuer()
+    client = JWKS_CLIENTS.get(issuer)
+    if client is None:
+        client = PyJWKClient(jwks_url())
+        JWKS_CLIENTS[issuer] = client
+
+    signing_key = client.get_signing_key_from_jwt(token)
+    claims = jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=audience,
+        options={"verify_iss": False},
+    )
+    if claims.get("iss") not in accepted_entra_issuers():
+        raise RuntimeError("Token issuer is not accepted")
+    return claims
+
+
+def token_has_required_access(claims: dict[str, Any]) -> bool:
+    accepted_roles = {
+        role
+        for role in (
+            os.getenv("ENTRA_REQUIRED_ROLE", "ExchangeLink.Operator").strip(),
+            os.getenv("ENTRA_CI_ROLE", "").strip(),
+        )
+        if role
+    }
+    roles = claims.get("roles") or []
+    if isinstance(roles, str):
+        roles = [roles]
+    scopes = str(claims.get("scp") or "").split()
+    return bool(accepted_roles.intersection(set(roles) | set(scopes)))
+
+
+def require_authorization(req: func.HttpRequest) -> tuple[dict[str, Any] | None, func.HttpResponse | None]:
+    token = bearer_token(req)
+    if not token:
+        return None, auth_error(req, "Missing bearer token", 401)
+
+    try:
+        claims = decode_entra_token(token)
+    except Exception as exc:
+        logging.warning("Bearer token validation failed: %s", exc)
+        return None, auth_error(req, "Invalid bearer token", 401)
+
+    if not token_has_required_access(claims):
+        return claims, auth_error(req, "Access denied", 403)
+
+    return claims, None
 
 
 def get_table_client(table_name: str):
@@ -493,6 +629,43 @@ def enqueue_sync_job(request_body: dict[str, Any] | None = None, *, trigger_sour
     }
 
 
+def last_manual_sync_created_at() -> datetime | None:
+    try:
+        entities = get_jobs_table_client().query_entities(
+            query_filter=f"PartitionKey eq '{SYNC_JOBS_PARTITION_KEY}'"
+        )
+    except Exception:
+        logging.exception("Failed to query sync jobs for cooldown")
+        return None
+
+    created_values = [
+        str(entity.get("createdAt") or "")
+        for entity in entities
+        if str(entity.get("triggerSource") or "manual").lower() == "manual"
+    ]
+    latest = max(created_values, default="")
+    if not latest:
+        return None
+    try:
+        return datetime.fromisoformat(latest)
+    except ValueError:
+        return None
+
+
+def manual_sync_cooldown_remaining(now: datetime | None = None) -> int:
+    cooldown_seconds = max(0, int_setting("MANUAL_SYNC_COOLDOWN_SECONDS", 60))
+    if cooldown_seconds <= 0:
+        return 0
+
+    last_created_at = last_manual_sync_created_at()
+    if not last_created_at:
+        return 0
+
+    now = now or utc_now()
+    elapsed = int((now - last_created_at).total_seconds())
+    return max(0, cooldown_seconds - elapsed)
+
+
 def run_scheduler_tick() -> dict[str, Any]:
     now = utc_now()
     now_iso = now.isoformat()
@@ -644,8 +817,8 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
         "percentComplete": entity.get("percentComplete", 0),
         "executionTimeMs": entity.get("executionTimeMs", 0),
         "message": entity.get("message", ""),
-        "error": entity.get("error", ""),
-        "results": results,
+        "error": "Sync job failed. Check backend logs for details." if entity.get("error") else "",
+        "results": sanitize_sync_results(results),
         "resultsTruncated": bool(entity.get("resultsTruncated", False)),
         "targetModel": {
             "mailboxLookup": "serial",
@@ -656,14 +829,47 @@ def parse_job_entity(entity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def mygeotab_credentials(body: dict[str, Any] | None = None) -> tuple[str, str, str, str]:
-    body = body or {}
+def sanitize_sync_results(results: Any) -> list[dict[str, Any]] | dict[str, Any]:
+    if isinstance(results, dict):
+        sanitized = dict(results)
+        if isinstance(sanitized.get("keptResults"), list):
+            sanitized["keptResults"] = sanitize_sync_results(sanitized["keptResults"])
+        return sanitized
+    if not isinstance(results, list):
+        return []
 
+    allowed_keys = {
+        "deviceId",
+        "serial",
+        "vehicleName",
+        "success",
+        "message",
+        "found",
+        "updated",
+        "created",
+    }
+    sanitized_results = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        sanitized_item = {key: item.get(key) for key in allowed_keys if key in item}
+        for key in ("message",):
+            if isinstance(sanitized_item.get(key), str):
+                sanitized_item[key] = redact_operational_detail(sanitized_item[key])
+        sanitized_results.append(sanitized_item)
+    return sanitized_results
+
+
+def redact_operational_detail(value: str) -> str:
+    return re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[redacted-email]", value)
+
+
+def mygeotab_credentials() -> tuple[str, str, str, str]:
     return (
-        str(body.get("myGeotabDatabase") or os.getenv("MYGEOTAB_DATABASE", "")).strip(),
-        str(body.get("myGeotabUsername") or os.getenv("MYGEOTAB_USERNAME", "")).strip(),
-        str(body.get("myGeotabPassword") or os.getenv("MYGEOTAB_PASSWORD", "")),
-        str(body.get("myGeotabServer") or os.getenv("MYGEOTAB_SERVER", "my.geotab.com")).strip()
+        str(os.getenv("MYGEOTAB_DATABASE", "")).strip(),
+        str(os.getenv("MYGEOTAB_USERNAME", "")).strip(),
+        str(os.getenv("MYGEOTAB_PASSWORD", "")),
+        str(os.getenv("MYGEOTAB_SERVER", "my.geotab.com")).strip()
         or "my.geotab.com",
     )
 
@@ -727,15 +933,10 @@ def get_mygeotab_api(database: str, username: str, password: str, server: str) -
 
 
 def fetch_device_for_update(api: API, device_identifier: str) -> dict[str, Any]:
-    for search in (
-        {"id": device_identifier},
-        {"serialNumber": device_identifier},
-        {"name": device_identifier},
-    ):
-        devices = api.get("Device", search=search) or []
-        if devices:
-            return devices[0]
-    raise RuntimeError(f"Device not found by id/serial/name: {device_identifier}")
+    devices = api.get("Device", search={"id": device_identifier}) or []
+    if devices:
+        return devices[0]
+    raise RuntimeError(f"Device not found by id: {device_identifier}")
 
 
 def build_update_property_lookup(api: API) -> dict[str, dict[str, str]]:
@@ -1185,7 +1386,7 @@ def run_sync(body: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
     max_devices = parse_int(body.get("maxDevices", 0), 0)
     started_at = utc_now()
 
-    database, username, password, server = mygeotab_credentials(body)
+    database, username, password, server = mygeotab_credentials()
     if not all([database, username, password, server]):
         raise RuntimeError("MyGeotab credentials are not fully configured")
 
@@ -1279,22 +1480,26 @@ def service_config_summary() -> dict[str, Any]:
 @app.route(route="health", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def health(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        return cors_preflight_response()
+        return cors_preflight_response(req)
 
     return json_response(
         {
             "status": "healthy",
             "timestamp": utc_now_iso(),
             "service": "exchangelink",
-            "config": service_config_summary(),
-        }
+        },
+        req=req,
     )
 
 
 @app.route(route="update-device-properties", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        return cors_preflight_response()
+        return cors_preflight_response(req)
+
+    _, auth_response = require_authorization(req)
+    if auth_response:
+        return auth_response
 
     body = parse_json(req)
     device_id = body.get("deviceId")
@@ -1308,6 +1513,7 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=400,
+            req=req,
         )
 
     if not isinstance(properties, dict) or not properties:
@@ -1318,6 +1524,7 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=400,
+            req=req,
         )
 
     logging.info(
@@ -1339,6 +1546,7 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
                 "propertyKeys": sorted(properties.keys()),
             },
             status_code=500,
+            req=req,
         )
 
     return json_response(
@@ -1352,14 +1560,19 @@ def update_device_properties(req: func.HttpRequest) -> func.HttpResponse:
             "updatedPropertyCount": result["updatedPropertyCount"],
             "updatedProperties": result["updatedProperties"],
             "missingPropertyDefinitions": result["missingPropertyDefinitions"],
-        }
+        },
+        req=req,
     )
 
 
 @app.route(route="sync-schedule", methods=["GET", "PUT", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        return cors_preflight_response()
+        return cors_preflight_response(req)
+
+    _, auth_response = require_authorization(req)
+    if auth_response:
+        return auth_response
 
     if req.method == "GET":
         try:
@@ -1373,6 +1586,7 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
                     "timestamp": utc_now_iso(),
                 },
                 status_code=500,
+                req=req,
             )
 
         return json_response(
@@ -1380,7 +1594,8 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
                 "success": True,
                 "timestamp": utc_now_iso(),
                 "schedule": schedule,
-            }
+            },
+            req=req,
         )
 
     body = parse_json(req)
@@ -1395,6 +1610,7 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=400,
+            req=req,
         )
 
     try:
@@ -1409,6 +1625,7 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=500,
+            req=req,
         )
 
     return json_response(
@@ -1417,16 +1634,35 @@ def sync_schedule(req: func.HttpRequest) -> func.HttpResponse:
             "timestamp": utc_now_iso(),
             "message": "Sync schedule saved",
             "schedule": schedule,
-        }
+        },
+        req=req,
     )
 
 
 @app.route(route="sync-to-exchange", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        return cors_preflight_response()
+        return cors_preflight_response(req)
+
+    _, auth_response = require_authorization(req)
+    if auth_response:
+        return auth_response
 
     body = parse_json(req)
+    unexpected_fields = sorted(set(body) - SYNC_REQUEST_ALLOWED_FIELDS)
+    blocked_fields = sorted(set(body).intersection(SYNC_REQUEST_BLOCKED_FIELDS))
+    if unexpected_fields or blocked_fields:
+        return json_response(
+            {
+                "success": False,
+                "error": "Unsupported sync request fields",
+                "unsupportedFields": sorted(set(unexpected_fields + blocked_fields)),
+                "timestamp": utc_now_iso(),
+            },
+            status_code=400,
+            req=req,
+        )
+
     max_devices = body.get("maxDevices", 0)
 
     try:
@@ -1439,15 +1675,56 @@ def sync_to_exchange(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=400,
+            req=req,
         )
 
-    return json_response(enqueue_sync_job(body, trigger_source="manual"), status_code=202)
+    active_job = active_sync_job_summary()
+    if active_job:
+        return json_response(
+            {
+                "success": False,
+                "error": "A sync job is already queued or running",
+                "activeJob": {
+                    "jobId": active_job["jobId"],
+                    "status": active_job["status"],
+                    "createdAt": active_job["createdAt"],
+                    "currentStage": active_job["currentStage"],
+                },
+                "timestamp": utc_now_iso(),
+            },
+            status_code=409,
+            req=req,
+        )
+
+    cooldown_remaining = manual_sync_cooldown_remaining()
+    if cooldown_remaining > 0:
+        return json_response(
+            {
+                "success": False,
+                "error": "Manual sync cooldown is still active",
+                "retryAfterSeconds": cooldown_remaining,
+                "timestamp": utc_now_iso(),
+            },
+            status_code=429,
+            headers={"Retry-After": str(cooldown_remaining)},
+            req=req,
+        )
+
+    return json_response(
+        enqueue_sync_job({"maxDevices": max_devices}, trigger_source="manual"),
+        status_code=202,
+        req=req,
+    )
 
 
 @app.route(route="sync-status", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
 def sync_status(req: func.HttpRequest) -> func.HttpResponse:
     if req.method == "OPTIONS":
-        return cors_preflight_response()
+        return cors_preflight_response(req)
+
+    _, auth_response = require_authorization(req)
+    if auth_response:
+        return auth_response
 
     job_id = (req.params.get("jobId") or "").strip()
     if not job_id:
@@ -1458,6 +1735,7 @@ def sync_status(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=400,
+            req=req,
         )
 
     entity = get_job_entity(job_id)
@@ -1470,6 +1748,7 @@ def sync_status(req: func.HttpRequest) -> func.HttpResponse:
                 "timestamp": utc_now_iso(),
             },
             status_code=404,
+            req=req,
         )
 
     payload = {
@@ -1478,7 +1757,7 @@ def sync_status(req: func.HttpRequest) -> func.HttpResponse:
         "mode": "single-tenant",
         **parse_job_entity(entity),
     }
-    return json_response(payload)
+    return json_response(payload, req=req)
 
 
 @app.queue_trigger(arg_name="msg", queue_name=SYNC_QUEUE_NAME, connection="AzureWebJobsStorage")
