@@ -63,6 +63,24 @@ param exchangeTenantId string = ''
 @description('Single-tenant Exchange app registration client ID.')
 param exchangeClientId string = ''
 
+@description('Microsoft Entra tenant ID used to validate backend API bearer tokens.')
+param entraTenantId string = exchangeTenantId
+
+@description('Expected audience for backend API bearer tokens, such as api://<backend-app-id>.')
+param entraApiAudience string = ''
+
+@description('Required app role or delegated scope for backend operator access.')
+param entraRequiredRole string = 'ExchangeLink.Operator'
+
+@description('Optional app role or delegated scope accepted for CI smoke tests.')
+param entraCiRole string = ''
+
+@description('Comma-separated browser origins allowed to call the backend API.')
+param allowedCorsOrigins string = 'https://my.geotab.com'
+
+@description('Global manual sync cooldown in seconds.')
+param manualSyncCooldownSeconds int = 60
+
 @description('Equipment mailbox domain used for serial-based mailbox lookup.')
 param equipmentDomain string
 
@@ -276,6 +294,30 @@ resource containerApp 'Microsoft.App/containerApps@2022-03-01' = if (deployConta
             {
               name: 'SCHEDULER_HEARTBEAT_CRON'
               value: schedulerHeartbeatCron
+            }
+            {
+              name: 'ENTRA_TENANT_ID'
+              value: entraTenantId
+            }
+            {
+              name: 'ENTRA_API_AUDIENCE'
+              value: entraApiAudience
+            }
+            {
+              name: 'ENTRA_REQUIRED_ROLE'
+              value: entraRequiredRole
+            }
+            {
+              name: 'ENTRA_CI_ROLE'
+              value: entraCiRole
+            }
+            {
+              name: 'ALLOWED_CORS_ORIGINS'
+              value: allowedCorsOrigins
+            }
+            {
+              name: 'MANUAL_SYNC_COOLDOWN_SECONDS'
+              value: string(manualSyncCooldownSeconds)
             }
           ]
           resources: {

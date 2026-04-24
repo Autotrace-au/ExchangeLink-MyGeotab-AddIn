@@ -23,6 +23,7 @@ required_vars=(
   EQUIPMENT_DOMAIN
   EXCHANGE_TENANT_ID
   EXCHANGE_CLIENT_ID
+  ENTRA_API_AUDIENCE
   MYGEOTAB_DATABASE
   MYGEOTAB_USERNAME
   MYGEOTAB_PASSWORD
@@ -50,6 +51,11 @@ SCHEDULER_REPLICA_RETRY_LIMIT="${SCHEDULER_REPLICA_RETRY_LIMIT:-1}"
 DEFAULT_TIMEZONE="${DEFAULT_TIMEZONE:-AUS Eastern Standard Time}"
 MYGEOTAB_SERVER="${MYGEOTAB_SERVER:-my.geotab.com}"
 MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC="${MAKE_MAILBOX_VISIBLE_ON_FIRST_SYNC:-true}"
+ENTRA_TENANT_ID="${ENTRA_TENANT_ID:-${EXCHANGE_TENANT_ID}}"
+ENTRA_REQUIRED_ROLE="${ENTRA_REQUIRED_ROLE:-ExchangeLink.Operator}"
+ENTRA_CI_ROLE="${ENTRA_CI_ROLE:-}"
+ALLOWED_CORS_ORIGINS="${ALLOWED_CORS_ORIGINS:-https://my.geotab.com}"
+MANUAL_SYNC_COOLDOWN_SECONDS="${MANUAL_SYNC_COOLDOWN_SECONDS:-60}"
 
 if [ ! -f "${REPO_ROOT}/infra/main.bicep" ]; then
   echo "Missing infra/main.bicep"
@@ -91,6 +97,12 @@ deploy_infra() {
       schedulerReplicaRetryLimit="${SCHEDULER_REPLICA_RETRY_LIMIT}" \
       exchangeTenantId="${EXCHANGE_TENANT_ID}" \
       exchangeClientId="${EXCHANGE_CLIENT_ID}" \
+      entraTenantId="${ENTRA_TENANT_ID}" \
+      entraApiAudience="${ENTRA_API_AUDIENCE}" \
+      entraRequiredRole="${ENTRA_REQUIRED_ROLE}" \
+      entraCiRole="${ENTRA_CI_ROLE}" \
+      allowedCorsOrigins="${ALLOWED_CORS_ORIGINS}" \
+      manualSyncCooldownSeconds="${MANUAL_SYNC_COOLDOWN_SECONDS}" \
       equipmentDomain="${EQUIPMENT_DOMAIN}" \
       defaultTimezone="${DEFAULT_TIMEZONE}" \
       myGeotabServer="${MYGEOTAB_SERVER}" \
@@ -146,24 +158,19 @@ for attempt in $(seq 1 30); do
     if ! SCHEDULE_PREFLIGHT_HEADERS="$(curl -fsS -i --max-time 10 -X OPTIONS \
       -H "Origin: https://my.geotab.com" \
       -H "Access-Control-Request-Method: PUT" \
-      -H "Access-Control-Request-Headers: content-type" \
+      -H "Access-Control-Request-Headers: authorization,content-type" \
       "${BACKEND_URL}/api/sync-schedule")"; then
       echo "Sync schedule preflight request failed."
       exit 1
     fi
 
-    if ! printf '%s' "${SCHEDULE_PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-origin: (\*|https://my\.geotab\.com)$'; then
+    if ! printf '%s' "${SCHEDULE_PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-origin: https://my\.geotab\.com$'; then
       echo "Sync schedule preflight did not return Access-Control-Allow-Origin."
       exit 1
     fi
 
     if ! printf '%s' "${SCHEDULE_PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-methods: .*PUT'; then
       echo "Sync schedule preflight did not allow PUT."
-      exit 1
-    fi
-
-    if ! curl -fsS --max-time 10 "${BACKEND_URL}/api/sync-schedule" >/dev/null; then
-      echo "Sync schedule endpoint did not return a successful response."
       exit 1
     fi
 

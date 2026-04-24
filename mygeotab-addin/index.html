@@ -6,6 +6,7 @@
     <title>ExchangeLink Property Manager</title>
 </head>
 <body>
+    <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
     <script>
         // Inject CSS dynamically to bypass MyGeotab's style tag stripping
         (function() {
@@ -507,6 +508,26 @@
                     <input type="text" id="backendUrl" placeholder="https://your-backend.azurecontainerapps.io" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
                 </div>
 
+                <div class="property-item">
+                    <div class="property-info">
+                        <div class="property-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0110 0v4"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3>Microsoft Sign-In</h3>
+                            <p>Public Entra app settings for operator authorization</p>
+                        </div>
+                    </div>
+                    <div style="display: grid; gap: 10px; margin-top: 12px;">
+                        <input type="text" id="entraTenantId" placeholder="Entra tenant ID" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+                        <input type="text" id="entraClientId" placeholder="Add-in SPA client ID" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+                        <input type="text" id="entraApiScope" placeholder="api://backend-app-id/ExchangeLink.Access" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+                    </div>
+                </div>
+
                 <div style="margin-top: 20px; display: flex; gap: 12px;">
                     <button id="saveBackendConfigBtn" class="btn btn-primary">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -521,6 +542,14 @@
                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                         </svg>
                         Test Connection
+                    </button>
+                    <button id="signInMicrosoftBtn" class="btn btn-secondary">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"></path>
+                            <polyline points="10 17 15 12 10 7"></polyline>
+                            <line x1="15" y1="12" x2="3" y2="12"></line>
+                        </svg>
+                        Sign in
                     </button>
                 </div>
 
@@ -880,6 +909,9 @@
             const EXCHANGELINK_ADDIN_DATA_ID = 'P6B8oQ6wQ5i2t1h5n3kJlg';
             const EXCHANGELINK_SETTINGS_KEY = 'settings';
             const BACKEND_URL_STORAGE_KEY = 'exchangeLinkBackendUrl';
+            const ENTRA_TENANT_ID_STORAGE_KEY = 'exchangeLinkEntraTenantId';
+            const ENTRA_CLIENT_ID_STORAGE_KEY = 'exchangeLinkEntraClientId';
+            const ENTRA_API_SCOPE_STORAGE_KEY = 'exchangeLinkEntraApiScope';
             const LEGACY_BACKEND_URL_STORAGE_KEYS = ['fleetSyncBackendUrl', 'fleetSyncFunctionUrl', 'fleetSyncWebhookUrl'];
             const GROUPS_STORAGE_KEY = 'exchangeLinkGroups';
             const LEGACY_GROUPS_STORAGE_KEYS = ['fleetSyncGroups'];
@@ -929,6 +961,8 @@
             let missingProperties = [];
             let cachedSettingsRecordId = null;
             let currentSyncSchedule = null;
+            let msalClient = null;
+            let signedInAccount = null;
 
             function initialize(apiInstance, stateInstance, callback) {
                 api = apiInstance;
@@ -973,6 +1007,7 @@
                 const saveAllAssetsBtn = document.getElementById('saveAllAssetsBtn');
                 const saveBackendConfigBtn = document.getElementById('saveBackendConfigBtn');
                 const testBackendBtn = document.getElementById('testBackendBtn');
+                const signInMicrosoftBtn = document.getElementById('signInMicrosoftBtn');
                 const triggerSyncBtn = document.getElementById('triggerSyncBtn');
                 const saveAutoSyncBtn = document.getElementById('saveAutoSyncBtn');
                 const autoSyncPreset = document.getElementById('autoSyncPreset');
@@ -988,6 +1023,7 @@
                 if (saveAllAssetsBtn) saveAllAssetsBtn.addEventListener('click', saveAllAssets);
                 if (saveBackendConfigBtn) saveBackendConfigBtn.addEventListener('click', saveBackendConfig);
                 if (testBackendBtn) testBackendBtn.addEventListener('click', testBackendConnection);
+                if (signInMicrosoftBtn) signInMicrosoftBtn.addEventListener('click', signInWithMicrosoft);
                 if (triggerSyncBtn) triggerSyncBtn.addEventListener('click', triggerSync);
                 if (saveAutoSyncBtn) saveAutoSyncBtn.addEventListener('click', saveSyncSchedule);
                 if (autoSyncPreset) autoSyncPreset.addEventListener('change', updateAutoSyncFormVisibility);
@@ -1026,11 +1062,27 @@
                 return icons[type] || icons.info;
             }
 
+            function setIconStatus(element, message, type = 'info') {
+                if (!element) return;
+                element.className = `status-message status-${type}`;
+                element.textContent = '';
+
+                const iconWrapper = document.createElement('span');
+                iconWrapper.innerHTML = getStatusIcon(type);
+                const icon = iconWrapper.firstElementChild;
+                if (icon) {
+                    element.appendChild(icon);
+                }
+
+                const text = document.createElement('span');
+                text.textContent = message;
+                element.appendChild(text);
+            }
+
             function updateStatus(message, type = 'info') {
                 const statusElement = document.getElementById('statusMessage');
                 if (statusElement) {
-                    statusElement.innerHTML = getStatusIcon(type) + '<span>' + message + '</span>';
-                    statusElement.className = `status-message status-${type}`;
+                    setIconStatus(statusElement, message, type);
                 }
             }
 
@@ -1497,8 +1549,7 @@
             function updateAssetStatus(message, type = 'info') {
                 const statusElement = document.getElementById('assetStatusMessage');
                 if (statusElement) {
-                    statusElement.innerHTML = getStatusIcon(type) + '<span>' + message + '</span>';
-                    statusElement.className = `status-message status-${type}`;
+                    setIconStatus(statusElement, message, type);
                 }
             }
 
@@ -1961,12 +2012,18 @@
                         findFirstStoredValue(LEGACY_BACKEND_URL_STORAGE_KEYS) ||
                         DEFAULT_EXCHANGELINK_BACKEND_URL
                     ),
+                    entraTenantId: (localStorage.getItem(ENTRA_TENANT_ID_STORAGE_KEY) || '').trim(),
+                    entraClientId: (localStorage.getItem(ENTRA_CLIENT_ID_STORAGE_KEY) || '').trim(),
+                    entraApiScope: (localStorage.getItem(ENTRA_API_SCOPE_STORAGE_KEY) || '').trim(),
                     assetGroups: Array.isArray(groups) ? groups : []
                 };
             }
 
             function writeLocalSettings(settings) {
                 localStorage.setItem(BACKEND_URL_STORAGE_KEY, normalizeBackendBaseUrl(settings.backendUrl || ''));
+                localStorage.setItem(ENTRA_TENANT_ID_STORAGE_KEY, (settings.entraTenantId || '').trim());
+                localStorage.setItem(ENTRA_CLIENT_ID_STORAGE_KEY, (settings.entraClientId || '').trim());
+                localStorage.setItem(ENTRA_API_SCOPE_STORAGE_KEY, (settings.entraApiScope || '').trim());
                 localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(settings.assetGroups || []));
                 LEGACY_BACKEND_URL_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
                 LEGACY_GROUPS_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
@@ -2003,6 +2060,9 @@
                             settingsRecord.details.functionAppUrl ||
                             localSettings.backendUrl
                         ),
+                        entraTenantId: (settingsRecord.details.entraTenantId || localSettings.entraTenantId || '').trim(),
+                        entraClientId: (settingsRecord.details.entraClientId || localSettings.entraClientId || '').trim(),
+                        entraApiScope: (settingsRecord.details.entraApiScope || localSettings.entraApiScope || '').trim(),
                         assetGroups: []
                     };
 
@@ -2032,6 +2092,9 @@
             async function persistSettings() {
                 const settings = {
                     backendUrl: getConfiguredBackendUrl(),
+                    entraTenantId: (localStorage.getItem(ENTRA_TENANT_ID_STORAGE_KEY) || '').trim(),
+                    entraClientId: (localStorage.getItem(ENTRA_CLIENT_ID_STORAGE_KEY) || '').trim(),
+                    entraApiScope: (localStorage.getItem(ENTRA_API_SCOPE_STORAGE_KEY) || '').trim(),
                     assetGroups: assetGroups
                 };
 
@@ -2046,6 +2109,9 @@
                     details: {
                         key: EXCHANGELINK_SETTINGS_KEY,
                         backendUrl: settings.backendUrl,
+                        entraTenantId: settings.entraTenantId,
+                        entraClientId: settings.entraClientId,
+                        entraApiScope: settings.entraApiScope,
                         assetGroupsJson: JSON.stringify(settings.assetGroups || [])
                     }
                 };
@@ -2160,8 +2226,7 @@
                 const statusDiv = document.getElementById('autoSyncStatusMessage');
                 if (!statusDiv) return;
 
-                statusDiv.className = `status-message status-${type}`;
-                statusDiv.innerHTML = `${getStatusIcon(type)}<span>${message}</span>`;
+                setIconStatus(statusDiv, message, type);
             }
 
             function formatScheduleTimestamp(value, timezone) {
@@ -2217,16 +2282,15 @@
                     ? `${lastJob.status || 'unknown'}${lastJob.currentStage ? ` (${lastJob.currentStage})` : ''}`
                     : 'No scheduled job has run yet';
 
-                summaryDiv.innerHTML = `
-                    <div><strong>Configured:</strong> ${schedule.configured ? 'Yes' : 'No'}</div>
-                    <div><strong>Status:</strong> ${schedule.enabled ? 'Enabled' : 'Disabled'}</div>
-                    <div><strong>Schedule:</strong> ${describeSchedule(schedule)}</div>
-                    <div><strong>Next run:</strong> ${formatScheduleTimestamp(schedule.nextRunAtUtc, schedule.timezone)}</div>
-                    <div><strong>Last scheduled run:</strong> ${formatScheduleTimestamp(schedule.lastScheduledRunAt, schedule.timezone)}</div>
-                    <div><strong>Last completion:</strong> ${formatScheduleTimestamp(schedule.lastCompletionAt, schedule.timezone)}</div>
-                    <div><strong>Last result:</strong> ${schedule.lastRunStatus || 'Not available'}${schedule.lastRunMessage ? ` - ${schedule.lastRunMessage}` : ''}</div>
-                    <div><strong>Last scheduled job:</strong> ${lastJobStatus}</div>
-                `;
+                summaryDiv.textContent = '';
+                appendTextMetric(summaryDiv, 'Configured', schedule.configured ? 'Yes' : 'No');
+                appendTextMetric(summaryDiv, 'Status', schedule.enabled ? 'Enabled' : 'Disabled');
+                appendTextMetric(summaryDiv, 'Schedule', describeSchedule(schedule));
+                appendTextMetric(summaryDiv, 'Next run', formatScheduleTimestamp(schedule.nextRunAtUtc, schedule.timezone));
+                appendTextMetric(summaryDiv, 'Last scheduled run', formatScheduleTimestamp(schedule.lastScheduledRunAt, schedule.timezone));
+                appendTextMetric(summaryDiv, 'Last completion', formatScheduleTimestamp(schedule.lastCompletionAt, schedule.timezone));
+                appendTextMetric(summaryDiv, 'Last result', `${schedule.lastRunStatus || 'Not available'}${schedule.lastRunMessage ? ` - ${schedule.lastRunMessage}` : ''}`);
+                appendTextMetric(summaryDiv, 'Last scheduled job', lastJobStatus);
             }
 
             function populateSyncScheduleForm(schedule) {
@@ -2268,7 +2332,7 @@
 
                 try {
                     showAutoSyncStatus('Loading automatic sync schedule...', 'info');
-                    const response = await fetch(`${backendUrl}/api/sync-schedule`, {
+                    const response = await backendFetch(`${backendUrl}/api/sync-schedule`, {
                         method: 'GET'
                     });
                     const payload = await response.json();
@@ -2328,7 +2392,7 @@
                     if (saveButton) saveButton.disabled = true;
                     showAutoSyncStatus('Saving automatic sync schedule...', 'info');
 
-                    const response = await fetch(`${backendUrl}/api/sync-schedule`, {
+                    const response = await backendFetch(`${backendUrl}/api/sync-schedule`, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json'
@@ -2356,6 +2420,92 @@
                 return normalizeBackendBaseUrl(savedUrl);
             }
 
+            function getEntraConfig() {
+                return {
+                    tenantId: (localStorage.getItem(ENTRA_TENANT_ID_STORAGE_KEY) || '').trim(),
+                    clientId: (localStorage.getItem(ENTRA_CLIENT_ID_STORAGE_KEY) || '').trim(),
+                    apiScope: (localStorage.getItem(ENTRA_API_SCOPE_STORAGE_KEY) || '').trim()
+                };
+            }
+
+            function ensureMsalClient() {
+                const config = getEntraConfig();
+                if (!config.tenantId || !config.clientId || !config.apiScope) {
+                    throw new Error('Microsoft sign-in settings are not configured.');
+                }
+                if (!window.msal) {
+                    throw new Error('Microsoft sign-in library did not load.');
+                }
+                if (!msalClient) {
+                    msalClient = new msal.PublicClientApplication({
+                        auth: {
+                            clientId: config.clientId,
+                            authority: `https://login.microsoftonline.com/${config.tenantId}`,
+                            redirectUri: window.location.origin + window.location.pathname
+                        },
+                        cache: {
+                            cacheLocation: 'localStorage',
+                            storeAuthStateInCookie: false
+                        }
+                    });
+                }
+                return msalClient;
+            }
+
+            function updateSignInState(account) {
+                signedInAccount = account || null;
+                const button = document.getElementById('signInMicrosoftBtn');
+                if (!button) return;
+                const label = signedInAccount ? 'Signed in' : 'Sign in';
+                const name = signedInAccount && (signedInAccount.username || signedInAccount.name);
+                button.lastChild.textContent = name ? ` ${label}: ${name}` : ` ${label}`;
+            }
+
+            async function acquireBackendToken(interactive = false) {
+                const client = ensureMsalClient();
+                const config = getEntraConfig();
+                const accounts = client.getAllAccounts();
+                const request = {
+                    scopes: [config.apiScope],
+                    account: signedInAccount || accounts[0] || null
+                };
+
+                try {
+                    const response = request.account && !interactive
+                        ? await client.acquireTokenSilent(request)
+                        : await client.loginPopup({ scopes: [config.apiScope] });
+                    updateSignInState(response.account);
+                    return response.accessToken;
+                } catch (error) {
+                    if (interactive) {
+                        throw error;
+                    }
+                    const response = await client.loginPopup({ scopes: [config.apiScope] });
+                    updateSignInState(response.account);
+                    return response.accessToken;
+                }
+            }
+
+            async function signInWithMicrosoft() {
+                try {
+                    await acquireBackendToken(true);
+                    showBackendResult('Signed in with Microsoft.', 'success');
+                } catch (error) {
+                    console.error('Microsoft sign-in failed:', error);
+                    showBackendResult(`Microsoft sign-in failed: ${error.message}`, 'error');
+                }
+            }
+
+            async function backendFetch(url, options = {}) {
+                const token = await acquireBackendToken(false);
+                const headers = new Headers(options.headers || {});
+                headers.set('Authorization', `Bearer ${token}`);
+                return fetch(url, {
+                    ...options,
+                    headers
+                });
+            }
+
             async function updateDeviceProperties(deviceId, properties) {
                 console.log('=== updateDeviceProperties START ===');
                 console.log('Device ID:', deviceId);
@@ -2374,7 +2524,7 @@
                     const endpoint = `${backendUrl}/api/update-device-properties`;
                     console.log('Calling endpoint:', endpoint);
 
-                    const response = await fetch(endpoint, {
+                    const response = await backendFetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -2423,6 +2573,9 @@
             async function saveBackendConfig() {
                 const backendUrlInput = document.getElementById('backendUrl');
                 const backendUrl = normalizeBackendBaseUrl(backendUrlInput.value);
+                const entraTenantId = (document.getElementById('entraTenantId') || {}).value || '';
+                const entraClientId = (document.getElementById('entraClientId') || {}).value || '';
+                const entraApiScope = (document.getElementById('entraApiScope') || {}).value || '';
 
                 if (!backendUrl) {
                     showBackendResult('Please enter your Backend URL.', 'error');
@@ -2440,6 +2593,12 @@
                 }
 
                 localStorage.setItem(BACKEND_URL_STORAGE_KEY, backendUrl);
+                localStorage.setItem(ENTRA_TENANT_ID_STORAGE_KEY, entraTenantId.trim());
+                localStorage.setItem(ENTRA_CLIENT_ID_STORAGE_KEY, entraClientId.trim());
+                localStorage.setItem(ENTRA_API_SCOPE_STORAGE_KEY, entraApiScope.trim());
+                msalClient = null;
+                signedInAccount = null;
+                updateSignInState(null);
                 await persistSettings();
                 showBackendResult('Configuration saved successfully.', 'success');
                 showExchangeStatus('connected');
@@ -2451,7 +2610,15 @@
              */
             function loadBackendConfig() {
                 const backendUrlInput = document.getElementById('backendUrl');
+                const entraTenantInput = document.getElementById('entraTenantId');
+                const entraClientInput = document.getElementById('entraClientId');
+                const entraScopeInput = document.getElementById('entraApiScope');
                 const savedBackendUrl = getConfiguredBackendUrl();
+                const entraConfig = getEntraConfig();
+
+                if (entraTenantInput) entraTenantInput.value = entraConfig.tenantId;
+                if (entraClientInput) entraClientInput.value = entraConfig.clientId;
+                if (entraScopeInput) entraScopeInput.value = entraConfig.apiScope;
 
                 if (savedBackendUrl && backendUrlInput) {
                     backendUrlInput.value = savedBackendUrl;
@@ -2507,17 +2674,7 @@
             function showBackendResult(message, type) {
                 const resultDiv = document.getElementById('backendTestResult');
                 resultDiv.style.display = 'block';
-                resultDiv.className = `status-message status-${type}`;
-
-                const icon = type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ';
-                resultDiv.innerHTML = `
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <span>${message}</span>
-                `;
+                setIconStatus(resultDiv, message, type);
             }
 
             function saveWebhookUrl() {
@@ -2636,7 +2793,7 @@
                     console.log('Calling sync endpoint:', endpoint);
                     console.log('Request body:', requestBody);
 
-                    const response = await fetch(endpoint, {
+                    const response = await backendFetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -2665,7 +2822,7 @@
                         failed: 0,
                         percentComplete: 0
                     });
-                    syncSummary.innerHTML = '<div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">Waiting for background sync job to start...</div>';
+                    renderQueuedSummary(syncSummary);
                     syncResult.textContent = JSON.stringify({ jobId: result.jobId, statusUrl: result.statusUrl }, null, 2);
 
                     const finalStatus = await pollSyncJob(backendUrl, result.jobId, updateSyncStatus, syncSummary, syncResult);
@@ -2675,7 +2832,7 @@
                     console.error('Sync error:', error);
                     updateSyncStatus(`Sync failed: ${error.message}`, 'error');
                     
-                    syncSummary.innerHTML = '';
+                    syncSummary.textContent = '';
                     syncResult.textContent = `Error: ${error.message}\n\nPlease check:\n1. Backend URL is correct\n2. Backend is deployed and healthy\n3. Backend Exchange configuration is valid\n4. Key Vault secrets are present\n5. Network connectivity to Azure Container Apps\n\nSee browser console for more details.`;
                     syncResultContainer.style.display = 'block';
                     renderSyncProgress({
@@ -2706,7 +2863,7 @@
             }
 
             function formatSyncResultLabel(item) {
-                return item.vehicleName || item.displayName || item.serial || item.primarySmtpAddress || item.deviceId || 'Unidentified';
+                return item.vehicleName || item.displayName || item.serial || item.deviceId || 'Unidentified';
             }
 
             function renderSyncResults(results, resultElement) {
@@ -2720,13 +2877,120 @@
                 const lines = normalizedResults.map(item => {
                     const label = formatSyncResultLabel(item);
                     const serial = item.serial ? `Serial: ${item.serial}` : 'Serial: n/a';
-                    const mailbox = item.primarySmtpAddress ? `Mailbox: ${item.primarySmtpAddress}` : 'Mailbox: n/a';
                     const status = item.success ? 'Success' : 'Failed';
                     const message = item.message || 'No message returned';
-                    return `${label}\n  ${serial}\n  ${mailbox}\n  Status: ${status}\n  Message: ${message}`;
+                    return `${label}\n  ${serial}\n  Status: ${status}\n  Message: ${message}`;
                 });
 
                 resultElement.textContent = lines.join('\n\n');
+            }
+
+            function appendTextMetric(parent, label, value) {
+                const row = document.createElement('div');
+                const strong = document.createElement('strong');
+                strong.textContent = `${label}: `;
+                row.appendChild(strong);
+                row.appendChild(document.createTextNode(String(value)));
+                parent.appendChild(row);
+            }
+
+            function renderPollingSummary(summaryElement, details) {
+                summaryElement.textContent = '';
+                const box = document.createElement('div');
+                box.style.padding = '12px';
+                box.style.backgroundColor = '#f8fafc';
+                box.style.border = '1px solid #cbd5e1';
+                box.style.borderRadius = '6px';
+
+                appendTextMetric(box, 'Job ID', details.jobId);
+                appendTextMetric(box, 'Status', details.status);
+                appendTextMetric(box, 'Stage', details.stage);
+                appendTextMetric(box, 'Progress', `${details.percentComplete}%`);
+                appendTextMetric(box, 'Total', details.total);
+                appendTextMetric(box, 'Processed', details.processed);
+                appendTextMetric(box, 'Successful', details.successful);
+                appendTextMetric(box, 'Failed', details.failed);
+                summaryElement.appendChild(box);
+            }
+
+            function renderQueuedSummary(summaryElement) {
+                summaryElement.textContent = '';
+                const box = document.createElement('div');
+                box.style.padding = '12px';
+                box.style.backgroundColor = '#f0f9ff';
+                box.style.border = '1px solid #3b82f6';
+                box.style.borderRadius = '6px';
+                box.textContent = 'Waiting for background sync job to start...';
+                summaryElement.appendChild(box);
+            }
+
+            function createStatCard(value, label, styles) {
+                const card = document.createElement('div');
+                card.style.padding = '12px';
+                card.style.backgroundColor = styles.background;
+                card.style.border = styles.border;
+                card.style.borderRadius = '6px';
+
+                const number = document.createElement('div');
+                number.style.fontSize = '24px';
+                number.style.fontWeight = 'bold';
+                number.style.color = styles.valueColor;
+                number.textContent = String(value);
+
+                const caption = document.createElement('div');
+                caption.style.fontSize = '12px';
+                caption.style.color = styles.labelColor;
+                caption.textContent = label;
+
+                card.appendChild(number);
+                card.appendChild(caption);
+                return card;
+            }
+
+            function renderFinalSyncSummary(summaryElement, result) {
+                summaryElement.textContent = '';
+                const grid = document.createElement('div');
+                grid.style.display = 'grid';
+                grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(150px, 1fr))';
+                grid.style.gap = '12px';
+                grid.style.marginBottom = '12px';
+
+                grid.appendChild(createStatCard(result.processed || 0, 'Devices Processed', {
+                    background: '#f0f9ff',
+                    border: '1px solid #3b82f6',
+                    valueColor: '#1e3a8a',
+                    labelColor: '#1e40af'
+                }));
+                grid.appendChild(createStatCard(result.successful || 0, 'Successful Updates', {
+                    background: '#f0fdf4',
+                    border: '1px solid #10b981',
+                    valueColor: '#065f46',
+                    labelColor: '#047857'
+                }));
+                grid.appendChild(createStatCard(result.failed || 0, 'Failed Updates', {
+                    background: '#fef2f2',
+                    border: '1px solid #ef4444',
+                    valueColor: '#991b1b',
+                    labelColor: '#b91c1c'
+                }));
+                grid.appendChild(createStatCard(result.executionTimeMs ? Math.round(result.executionTimeMs / 1000) : 0, 'Execution Time', {
+                    background: '#fafafa',
+                    border: '1px solid #9ca3af',
+                    valueColor: '#374151',
+                    labelColor: '#4b5563'
+                }));
+                summaryElement.appendChild(grid);
+
+                const details = document.createElement('div');
+                details.style.fontSize = '12px';
+                details.style.color = 'var(--text-muted)';
+                appendTextMetric(details, 'Job ID', result.jobId || 'n/a');
+                appendTextMetric(details, 'Stage', result.currentStage || (result.status || 'unknown'));
+                appendTextMetric(details, 'Total Devices', result.total || result.processed || 0);
+                if (result.resultsTruncated) {
+                    appendTextMetric(details, 'Note', 'Detailed results were truncated for storage.');
+                }
+                summaryElement.appendChild(details);
             }
 
             async function pollSyncJob(functionUrl, jobId, statusUpdater, summaryElement, resultElement) {
@@ -2734,7 +2998,7 @@
                 const maxPollAttempts = 180;
 
                 for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
-                    const response = await fetch(pollEndpoint, {
+                    const response = await backendFetch(pollEndpoint, {
                         method: 'GET'
                     });
 
@@ -2762,18 +3026,16 @@
                         failed,
                         percentComplete
                     });
-                    summaryElement.innerHTML = `
-                        <div style="padding: 12px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px;">
-                            <div><strong>Job ID:</strong> ${jobId}</div>
-                            <div><strong>Status:</strong> ${status}</div>
-                            <div><strong>Stage:</strong> ${payload.currentStage || status}</div>
-                            <div><strong>Progress:</strong> ${percentComplete}%</div>
-                            <div><strong>Total:</strong> ${total}</div>
-                            <div><strong>Processed:</strong> ${processed}</div>
-                            <div><strong>Successful:</strong> ${successful}</div>
-                            <div><strong>Failed:</strong> ${failed}</div>
-                        </div>
-                    `;
+                    renderPollingSummary(summaryElement, {
+                        jobId,
+                        status,
+                        stage: payload.currentStage || status,
+                        percentComplete,
+                        total,
+                        processed,
+                        successful,
+                        failed
+                    });
                     renderSyncResults(payload.results, resultElement);
 
                     if (status === 'completed' || status === 'failed') {
@@ -2801,32 +3063,7 @@
                 });
                 setSyncProgressState(statusType);
 
-                syncSummary.innerHTML = `
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px;">
-                        <div style="padding: 12px; background-color: #f0f9ff; border: 1px solid #3b82f6; border-radius: 6px;">
-                            <div style="font-size: 24px; font-weight: bold; color: #1e3a8a;">${result.processed || 0}</div>
-                            <div style="font-size: 12px; color: #1e40af;">Devices Processed</div>
-                        </div>
-                        <div style="padding: 12px; background-color: #f0fdf4; border: 1px solid #10b981; border-radius: 6px;">
-                            <div style="font-size: 24px; font-weight: bold; color: #065f46;">${result.successful || 0}</div>
-                            <div style="font-size: 12px; color: #047857;">Successful Updates</div>
-                        </div>
-                        <div style="padding: 12px; background-color: #fef2f2; border: 1px solid #ef4444; border-radius: 6px;">
-                            <div style="font-size: 24px; font-weight: bold; color: #991b1b;">${result.failed || 0}</div>
-                            <div style="font-size: 12px; color: #b91c1c;">Failed Updates</div>
-                        </div>
-                        <div style="padding: 12px; background-color: #fafafa; border: 1px solid #9ca3af; border-radius: 6px;">
-                            <div style="font-size: 24px; font-weight: bold; color: #374151;">${result.executionTimeMs ? Math.round(result.executionTimeMs / 1000) : 0}s</div>
-                            <div style="font-size: 12px; color: #4b5563;">Execution Time</div>
-                        </div>
-                    </div>
-                    <div style="font-size: 12px; color: var(--text-muted);">
-                        <strong>Job ID:</strong> ${result.jobId || 'n/a'}
-                        <br><strong>Stage:</strong> ${result.currentStage || (result.status || 'unknown')}
-                        <br><strong>Total Devices:</strong> ${result.total || result.processed || 0}
-                        ${result.resultsTruncated ? '<br><strong>Note:</strong> Detailed results were truncated for storage.' : ''}
-                    </div>
-                `;
+                renderFinalSyncSummary(syncSummary, result);
                 renderSyncResults(result.results, syncResult);
                 syncResultContainer.style.display = 'block';
             }
@@ -2835,9 +3072,7 @@
                 const statusDiv = document.getElementById('syncStatusMessage');
                 if (!statusDiv) return;
 
-                statusDiv.className = `status-message status-${type}`;
-                const icon = getStatusIcon(type);
-                statusDiv.innerHTML = `${icon}<span>${message}</span>`;
+                setIconStatus(statusDiv, message, type);
             }
 
             // ===================================================================
@@ -2849,32 +3084,41 @@
                 const statusText = document.getElementById('exchangeConnectionText');
                 
                 if (!statusDiv || !statusText) return;
+                statusText.textContent = '';
+
+                const title = document.createElement('strong');
+                const detail = document.createElement('span');
+                detail.style.fontSize = '12px';
                 
                 switch(status) {
                     case 'connected':
                         statusDiv.style.background = '#d1fae5';
                         statusDiv.style.borderColor = '#10b981';
                         statusDiv.style.color = '#065f46';
-                        statusText.innerHTML = `<strong>✅ Backend Ready</strong><br>
-                            <span style="font-size: 12px;">This Add-In is connected to a tenant-specific ExchangeLink backend. Trigger a sync to validate mailbox updates.</span>`;
+                        title.textContent = 'Backend Ready';
+                        detail.textContent = 'This Add-In is connected to a tenant-specific ExchangeLink backend. Trigger a sync to validate mailbox updates.';
                         break;
                         
                     case 'not_configured':
                         statusDiv.style.background = '#dbeafe';
                         statusDiv.style.borderColor = '#3b82f6';
                         statusDiv.style.color = '#1e3a8a';
-                        statusText.innerHTML = `<strong>ℹ️ Setup Required</strong><br>
-                            <span style="font-size: 12px;">Save your tenant's backend URL above first.</span>`;
+                        title.textContent = 'Setup Required';
+                        detail.textContent = 'Save your tenant backend URL above first.';
                         break;
                         
                     case 'error':
                         statusDiv.style.background = '#fee2e2';
                         statusDiv.style.borderColor = '#ef4444';
                         statusDiv.style.color = '#991b1b';
-                        statusText.innerHTML = `<strong>❌ Error</strong><br>
-                            <span style="font-size: 12px;">${data.error || 'Unknown error'}</span>`;
+                        title.textContent = 'Error';
+                        detail.textContent = data.error || 'Unknown error';
                         break;
                 }
+
+                statusText.appendChild(title);
+                statusText.appendChild(document.createElement('br'));
+                statusText.appendChild(detail);
             }
 
             return {
