@@ -20,6 +20,7 @@ The add-in in [`mygeotab-addin/`](mygeotab-addin/README.md) lets MyGeotab users:
 - edit booking-related settings on assets
 - save the tenant backend URL in add-in/browser storage
 - trigger Exchange sync jobs
+- save and recall a tenant-wide automatic sync schedule
 - poll live sync status and review per-device results
 - manage assets in bulk from the add-in UI
 
@@ -28,9 +29,11 @@ The backend in [`function-app/`](function-app/README.md) exposes:
 - `GET /api/health`
 - `POST /api/update-device-properties`
 - `POST /api/sync-to-exchange`
+- `GET /api/sync-schedule`
+- `PUT /api/sync-schedule`
 - `GET /api/sync-status?jobId=...`
 
-Sync is asynchronous. Jobs are queued in Azure Storage, processed in the background by the Azure Functions host, and tracked in Table Storage so the add-in can poll progress without browser timeouts.
+Sync is asynchronous. Jobs are queued in Azure Storage, processed in the background by the Azure Functions host, and tracked in Table Storage so the add-in can poll progress without browser timeouts. A separate Azure Container Apps scheduled job can also enqueue unattended sync runs from the saved backend schedule.
 
 ## Deployment model
 

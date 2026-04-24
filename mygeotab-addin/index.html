@@ -546,6 +546,99 @@
             </section>
 
             <section class="properties-section">
+                <h2>Automatic Sync Schedule</h2>
+                <p class="info-text">
+                    Save a tenant-wide auto-sync schedule in the backend so Exchange sync keeps running even when nobody has this page open.
+                </p>
+
+                <div id="autoSyncStatusMessage" class="status-message status-info">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    <span>Save your backend URL first, then load or edit the automatic sync schedule.</span>
+                </div>
+
+                <div class="property-item">
+                    <div class="property-info">
+                        <div>
+                            <h3>Enable Automatic Sync</h3>
+                            <p>When enabled, the backend will queue unattended sync runs on the saved schedule.</p>
+                        </div>
+                    </div>
+                    <label style="display: inline-flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--text-color);">
+                        <input type="checkbox" id="autoSyncEnabled">
+                        <span>Automatic sync is enabled</span>
+                    </label>
+                </div>
+
+                <div class="property-item">
+                    <div class="property-info">
+                        <div>
+                            <h3>Schedule Preset</h3>
+                            <p>Select how often the backend should queue a full sync.</p>
+                        </div>
+                    </div>
+                    <select id="autoSyncPreset" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
+                        <option value="every-15-minutes">Every 15 minutes</option>
+                        <option value="hourly">Hourly</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                </div>
+
+                <div class="property-item">
+                    <div class="property-info">
+                        <div>
+                            <h3>Timezone</h3>
+                            <p>The backend stores the schedule in this timezone and converts execution to UTC.</p>
+                        </div>
+                    </div>
+                    <select id="autoSyncTimezone" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;"></select>
+                </div>
+
+                <div id="autoSyncDailyTimeRow" class="property-item">
+                    <div class="property-info">
+                        <div>
+                            <h3>Run Time</h3>
+                            <p>The local time used for daily and weekly schedules.</p>
+                        </div>
+                    </div>
+                    <input type="time" id="autoSyncDailyTime" value="09:00" style="width: 180px; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
+                </div>
+
+                <div id="autoSyncWeeklyDayRow" class="property-item">
+                    <div class="property-info">
+                        <div>
+                            <h3>Weekly Day</h3>
+                            <p>The local weekday used when the weekly preset is selected.</p>
+                        </div>
+                    </div>
+                    <select id="autoSyncWeeklyDay" style="width: 220px; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; margin-top: 12px;">
+                        <option value="monday">Monday</option>
+                        <option value="tuesday">Tuesday</option>
+                        <option value="wednesday">Wednesday</option>
+                        <option value="thursday">Thursday</option>
+                        <option value="friday">Friday</option>
+                        <option value="saturday">Saturday</option>
+                        <option value="sunday">Sunday</option>
+                    </select>
+                </div>
+
+                <div style="margin-top: 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <button id="saveAutoSyncBtn" class="btn btn-primary">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"></path>
+                            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                            <polyline points="7 3 7 8 15 8"></polyline>
+                        </svg>
+                        Save Auto-Sync Schedule
+                    </button>
+                </div>
+
+                <div id="autoSyncSummary" style="margin-top: 16px; padding: 16px; background-color: var(--light-bg); border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px; color: var(--text-color);">
+                    Schedule summary will appear here after the backend is loaded.
+                </div>
+            </section>
+
+            <section class="properties-section">
                 <h2>Exchange Synchronisation</h2>
                 <p class="info-text">
                     Synchronise MyGeotab devices with Exchange Online equipment mailboxes. This will fetch all devices from MyGeotab and update their corresponding Exchange mailboxes with current configuration (display names, timezones, booking settings, etc.).
@@ -791,6 +884,21 @@
             const GROUPS_STORAGE_KEY = 'exchangeLinkGroups';
             const LEGACY_GROUPS_STORAGE_KEYS = ['fleetSyncGroups'];
             const PROPERTY_SET_NAMES = ['ExchangeLink Properties', 'FleetBridge Properties'];
+            const SCHEDULE_PRESET_LABELS = {
+                'every-15-minutes': 'Every 15 minutes',
+                'hourly': 'Hourly',
+                'daily': 'Daily',
+                'weekly': 'Weekly'
+            };
+            const WEEKDAY_LABELS = {
+                monday: 'Monday',
+                tuesday: 'Tuesday',
+                wednesday: 'Wednesday',
+                thursday: 'Thursday',
+                friday: 'Friday',
+                saturday: 'Saturday',
+                sunday: 'Sunday'
+            };
 
             const REQUIRED_PROPERTIES = [
                 // Booking Configuration
@@ -820,6 +928,7 @@
             let existingProperties = [];
             let missingProperties = [];
             let cachedSettingsRecordId = null;
+            let currentSyncSchedule = null;
 
             function initialize(apiInstance, stateInstance, callback) {
                 api = apiInstance;
@@ -865,6 +974,8 @@
                 const saveBackendConfigBtn = document.getElementById('saveBackendConfigBtn');
                 const testBackendBtn = document.getElementById('testBackendBtn');
                 const triggerSyncBtn = document.getElementById('triggerSyncBtn');
+                const saveAutoSyncBtn = document.getElementById('saveAutoSyncBtn');
+                const autoSyncPreset = document.getElementById('autoSyncPreset');
 
                 if (checkBtn) checkBtn.addEventListener('click', checkProperties);
                 if (createBtn) createBtn.addEventListener('click', createMissingProperties);
@@ -878,11 +989,16 @@
                 if (saveBackendConfigBtn) saveBackendConfigBtn.addEventListener('click', saveBackendConfig);
                 if (testBackendBtn) testBackendBtn.addEventListener('click', testBackendConnection);
                 if (triggerSyncBtn) triggerSyncBtn.addEventListener('click', triggerSync);
+                if (saveAutoSyncBtn) saveAutoSyncBtn.addEventListener('click', saveSyncSchedule);
+                if (autoSyncPreset) autoSyncPreset.addEventListener('change', updateAutoSyncFormVisibility);
 
                 // Tab switching
                 document.querySelectorAll('.tab-button').forEach(button => {
                     button.addEventListener('click', () => switchTab(button.dataset.tab));
                 });
+
+                populateScheduleTimezoneOptions();
+                updateAutoSyncFormVisibility();
 
                 // Load saved configuration on init
                 loadBackendConfig();
@@ -1955,6 +2071,286 @@
                 }
             }
 
+            function availableTimezones() {
+                if (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function') {
+                    try {
+                        return Intl.supportedValuesOf('timeZone');
+                    } catch (error) {
+                        console.warn('Intl.supportedValuesOf(timeZone) failed, using fallback list:', error);
+                    }
+                }
+
+                return [
+                    'UTC',
+                    'Australia/Adelaide',
+                    'Australia/Brisbane',
+                    'Australia/Darwin',
+                    'Australia/Hobart',
+                    'Australia/Melbourne',
+                    'Australia/Perth',
+                    'Australia/Sydney',
+                    'Pacific/Auckland',
+                    'Asia/Singapore',
+                    'Europe/London',
+                    'Europe/Berlin',
+                    'America/New_York',
+                    'America/Chicago',
+                    'America/Denver',
+                    'America/Los_Angeles'
+                ];
+            }
+
+            function preferredScheduleTimezone() {
+                if (currentSyncSchedule && currentSyncSchedule.timezone) {
+                    return currentSyncSchedule.timezone;
+                }
+
+                if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+                    const resolvedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                    if (resolvedTimezone) {
+                        return resolvedTimezone;
+                    }
+                }
+
+                return 'UTC';
+            }
+
+            function populateScheduleTimezoneOptions(selectedTimezone) {
+                const select = document.getElementById('autoSyncTimezone');
+                if (!select) return;
+
+                const timezones = availableTimezones();
+                const preferredTimezone = selectedTimezone || preferredScheduleTimezone();
+                select.innerHTML = '';
+
+                timezones.forEach(timezoneName => {
+                    const option = document.createElement('option');
+                    option.value = timezoneName;
+                    option.textContent = timezoneName;
+                    if (timezoneName === preferredTimezone) {
+                        option.selected = true;
+                    }
+                    select.appendChild(option);
+                });
+
+                if (!timezones.includes(preferredTimezone)) {
+                    const option = document.createElement('option');
+                    option.value = preferredTimezone;
+                    option.textContent = preferredTimezone;
+                    option.selected = true;
+                    select.appendChild(option);
+                }
+            }
+
+            function updateAutoSyncFormVisibility() {
+                const preset = (document.getElementById('autoSyncPreset') || {}).value || 'daily';
+                const dailyTimeRow = document.getElementById('autoSyncDailyTimeRow');
+                const weeklyDayRow = document.getElementById('autoSyncWeeklyDayRow');
+
+                if (dailyTimeRow) {
+                    dailyTimeRow.style.display = (preset === 'daily' || preset === 'weekly') ? 'block' : 'none';
+                }
+
+                if (weeklyDayRow) {
+                    weeklyDayRow.style.display = preset === 'weekly' ? 'block' : 'none';
+                }
+            }
+
+            function showAutoSyncStatus(message, type = 'info') {
+                const statusDiv = document.getElementById('autoSyncStatusMessage');
+                if (!statusDiv) return;
+
+                statusDiv.className = `status-message status-${type}`;
+                statusDiv.innerHTML = `${getStatusIcon(type)}<span>${message}</span>`;
+            }
+
+            function formatScheduleTimestamp(value, timezone) {
+                if (!value) {
+                    return 'Not available';
+                }
+
+                const date = new Date(value);
+                if (Number.isNaN(date.getTime())) {
+                    return value;
+                }
+
+                return date.toLocaleString(undefined, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                    timeZone: timezone || undefined
+                });
+            }
+
+            function describeSchedule(schedule) {
+                if (!schedule) {
+                    return 'No automatic sync schedule has been loaded yet.';
+                }
+
+                const presetLabel = SCHEDULE_PRESET_LABELS[schedule.preset] || schedule.preset || 'Not set';
+                if (!schedule.enabled) {
+                    return `Automatic sync is disabled. Preset: ${presetLabel}.`;
+                }
+
+                if (schedule.preset === 'weekly') {
+                    const weekdayLabel = WEEKDAY_LABELS[schedule.weeklyDay] || schedule.weeklyDay || 'Unknown day';
+                    return `${presetLabel} on ${weekdayLabel} at ${schedule.dailyTime || 'n/a'} (${schedule.timezone || 'UTC'}).`;
+                }
+
+                if (schedule.preset === 'daily') {
+                    return `${presetLabel} at ${schedule.dailyTime || 'n/a'} (${schedule.timezone || 'UTC'}).`;
+                }
+
+                return `${presetLabel} (${schedule.timezone || 'UTC'}).`;
+            }
+
+            function updateAutoSyncSummary(schedule) {
+                const summaryDiv = document.getElementById('autoSyncSummary');
+                if (!summaryDiv) return;
+
+                if (!schedule) {
+                    summaryDiv.textContent = 'Schedule summary will appear here after the backend is loaded.';
+                    return;
+                }
+
+                const lastJob = schedule.lastScheduledJob;
+                const lastJobStatus = lastJob
+                    ? `${lastJob.status || 'unknown'}${lastJob.currentStage ? ` (${lastJob.currentStage})` : ''}`
+                    : 'No scheduled job has run yet';
+
+                summaryDiv.innerHTML = `
+                    <div><strong>Configured:</strong> ${schedule.configured ? 'Yes' : 'No'}</div>
+                    <div><strong>Status:</strong> ${schedule.enabled ? 'Enabled' : 'Disabled'}</div>
+                    <div><strong>Schedule:</strong> ${describeSchedule(schedule)}</div>
+                    <div><strong>Next run:</strong> ${formatScheduleTimestamp(schedule.nextRunAtUtc, schedule.timezone)}</div>
+                    <div><strong>Last scheduled run:</strong> ${formatScheduleTimestamp(schedule.lastScheduledRunAt, schedule.timezone)}</div>
+                    <div><strong>Last completion:</strong> ${formatScheduleTimestamp(schedule.lastCompletionAt, schedule.timezone)}</div>
+                    <div><strong>Last result:</strong> ${schedule.lastRunStatus || 'Not available'}${schedule.lastRunMessage ? ` - ${schedule.lastRunMessage}` : ''}</div>
+                    <div><strong>Last scheduled job:</strong> ${lastJobStatus}</div>
+                `;
+            }
+
+            function populateSyncScheduleForm(schedule) {
+                const normalizedSchedule = schedule || {
+                    enabled: false,
+                    preset: 'daily',
+                    timezone: preferredScheduleTimezone(),
+                    weeklyDay: 'monday',
+                    dailyTime: '09:00'
+                };
+
+                currentSyncSchedule = normalizedSchedule;
+                populateScheduleTimezoneOptions(normalizedSchedule.timezone);
+
+                const enabledInput = document.getElementById('autoSyncEnabled');
+                const presetInput = document.getElementById('autoSyncPreset');
+                const timezoneInput = document.getElementById('autoSyncTimezone');
+                const dailyTimeInput = document.getElementById('autoSyncDailyTime');
+                const weeklyDayInput = document.getElementById('autoSyncWeeklyDay');
+
+                if (enabledInput) enabledInput.checked = !!normalizedSchedule.enabled;
+                if (presetInput) presetInput.value = normalizedSchedule.preset || 'daily';
+                if (timezoneInput) timezoneInput.value = normalizedSchedule.timezone || preferredScheduleTimezone();
+                if (dailyTimeInput) dailyTimeInput.value = normalizedSchedule.dailyTime || '09:00';
+                if (weeklyDayInput) weeklyDayInput.value = normalizedSchedule.weeklyDay || 'monday';
+
+                updateAutoSyncFormVisibility();
+                updateAutoSyncSummary(normalizedSchedule);
+            }
+
+            async function loadSyncSchedule() {
+                const backendUrl = getConfiguredBackendUrl();
+                if (!backendUrl) {
+                    currentSyncSchedule = null;
+                    populateSyncScheduleForm(null);
+                    showAutoSyncStatus('Save your backend URL first, then load or edit the automatic sync schedule.', 'info');
+                    return;
+                }
+
+                try {
+                    showAutoSyncStatus('Loading automatic sync schedule...', 'info');
+                    const response = await fetch(`${backendUrl}/api/sync-schedule`, {
+                        method: 'GET'
+                    });
+                    const payload = await response.json();
+
+                    if (!response.ok || !payload.success) {
+                        throw new Error(payload.error || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const schedule = payload.schedule || null;
+                    if (schedule && !schedule.configured && (!schedule.timezone || schedule.timezone === 'UTC')) {
+                        schedule.timezone = preferredScheduleTimezone();
+                    }
+
+                    populateSyncScheduleForm(schedule);
+                    showAutoSyncStatus(
+                        schedule && schedule.enabled
+                            ? 'Automatic sync schedule loaded from the backend.'
+                            : 'Automatic sync is currently disabled. Adjust the form and save when ready.',
+                        schedule && schedule.enabled ? 'success' : 'info'
+                    );
+                } catch (error) {
+                    console.error('Failed to load sync schedule:', error);
+                    showAutoSyncStatus(`Failed to load automatic sync schedule: ${error.message}`, 'error');
+                }
+            }
+
+            function collectSyncSchedulePayload() {
+                const preset = (document.getElementById('autoSyncPreset') || {}).value || 'daily';
+                const payload = {
+                    enabled: !!((document.getElementById('autoSyncEnabled') || {}).checked),
+                    preset: preset,
+                    timezone: ((document.getElementById('autoSyncTimezone') || {}).value || preferredScheduleTimezone()).trim(),
+                    weeklyDay: ((document.getElementById('autoSyncWeeklyDay') || {}).value || 'monday').trim(),
+                    dailyTime: ((document.getElementById('autoSyncDailyTime') || {}).value || '09:00').trim()
+                };
+
+                if (preset !== 'weekly') {
+                    payload.weeklyDay = 'monday';
+                }
+
+                if (preset !== 'daily' && preset !== 'weekly') {
+                    payload.dailyTime = '09:00';
+                }
+
+                return payload;
+            }
+
+            async function saveSyncSchedule() {
+                const saveButton = document.getElementById('saveAutoSyncBtn');
+                const backendUrl = getConfiguredBackendUrl();
+                if (!backendUrl) {
+                    showAutoSyncStatus('Please save the backend URL first.', 'error');
+                    return;
+                }
+
+                try {
+                    if (saveButton) saveButton.disabled = true;
+                    showAutoSyncStatus('Saving automatic sync schedule...', 'info');
+
+                    const response = await fetch(`${backendUrl}/api/sync-schedule`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(collectSyncSchedulePayload())
+                    });
+                    const payload = await response.json();
+
+                    if (!response.ok || !payload.success) {
+                        throw new Error(payload.error || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    populateSyncScheduleForm(payload.schedule || null);
+                    showAutoSyncStatus('Automatic sync schedule saved.', 'success');
+                } catch (error) {
+                    console.error('Failed to save sync schedule:', error);
+                    showAutoSyncStatus(`Failed to save automatic sync schedule: ${error.message}`, 'error');
+                } finally {
+                    if (saveButton) saveButton.disabled = false;
+                }
+            }
+
             function getConfiguredBackendUrl() {
                 const savedUrl = localStorage.getItem(BACKEND_URL_STORAGE_KEY) || DEFAULT_EXCHANGELINK_BACKEND_URL;
                 return normalizeBackendBaseUrl(savedUrl);
@@ -2047,6 +2443,7 @@
                 await persistSettings();
                 showBackendResult('Configuration saved successfully.', 'success');
                 showExchangeStatus('connected');
+                await loadSyncSchedule();
             }
 
             /**
@@ -2059,8 +2456,12 @@
                 if (savedBackendUrl && backendUrlInput) {
                     backendUrlInput.value = savedBackendUrl;
                     showExchangeStatus('connected');
+                    loadSyncSchedule().catch(error => {
+                        console.error('Failed to load sync schedule after backend config load:', error);
+                    });
                 } else {
                     showExchangeStatus('not_configured');
+                    populateSyncScheduleForm(null);
                 }
             }
 
@@ -2089,6 +2490,7 @@
                             'success'
                         );
                         showExchangeStatus('connected');
+                        await loadSyncSchedule();
                     } else {
                         showBackendResult(`Connection failed: ${response.status} ${response.statusText}`, 'error');
                         showExchangeStatus('error', { error: `${response.status} ${response.statusText}` });
