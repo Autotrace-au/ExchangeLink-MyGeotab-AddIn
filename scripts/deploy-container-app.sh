@@ -139,8 +139,34 @@ fi
 
 echo "Waiting for backend health endpoint"
 for attempt in $(seq 1 30); do
-  if curl -fsS --max-time 10 "https://${CONTAINER_APP_FQDN}/api/health" >/dev/null 2>&1; then
-    echo "Container App is healthy: https://${CONTAINER_APP_FQDN}/api/health"
+  BACKEND_URL="https://${CONTAINER_APP_FQDN}"
+  if curl -fsS --max-time 10 "${BACKEND_URL}/api/health" >/dev/null 2>&1; then
+    echo "Container App is healthy: ${BACKEND_URL}/api/health"
+    echo "Checking automatic sync schedule endpoint and browser preflight"
+    if ! SCHEDULE_PREFLIGHT_HEADERS="$(curl -fsS -i --max-time 10 -X OPTIONS \
+      -H "Origin: https://my.geotab.com" \
+      -H "Access-Control-Request-Method: PUT" \
+      -H "Access-Control-Request-Headers: content-type" \
+      "${BACKEND_URL}/api/sync-schedule")"; then
+      echo "Sync schedule preflight request failed."
+      exit 1
+    fi
+
+    if ! printf '%s' "${SCHEDULE_PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-origin: (\*|https://my\.geotab\.com)$'; then
+      echo "Sync schedule preflight did not return Access-Control-Allow-Origin."
+      exit 1
+    fi
+
+    if ! printf '%s' "${SCHEDULE_PREFLIGHT_HEADERS}" | tr -d '\r' | grep -Eqi '^access-control-allow-methods: .*PUT'; then
+      echo "Sync schedule preflight did not allow PUT."
+      exit 1
+    fi
+
+    if ! curl -fsS --max-time 10 "${BACKEND_URL}/api/sync-schedule" >/dev/null; then
+      echo "Sync schedule endpoint did not return a successful response."
+      exit 1
+    fi
+
     echo "Deployment complete."
     exit 0
   fi

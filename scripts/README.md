@@ -15,6 +15,7 @@ Current behavior:
 - deploys or updates the Container App
 - waits for the ingress FQDN
 - smoke-tests `GET /api/health`
+- smoke-tests `OPTIONS` and `GET /api/sync-schedule`
 
 This is the main manual deployment entrypoint:
 
